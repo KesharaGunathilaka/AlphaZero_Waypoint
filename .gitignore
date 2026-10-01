@@ -1,0 +1,95 @@
+# ============================================================
+# AlphaZero_Waypoint — root .gitignore
+# Covers frontend/ (Next.js, pnpm), backend/ (FastAPI, uv), Docker, tooling.
+# ============================================================
+
+# ---------- Secrets & environment ----------
+# Never commit real env files; .env.example is the documented template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- Competition data ----------
+# Only data/general/ (the shared CSVs needed for seeding) is committed.
+# The booklet forbids publishing the other datasets or their derivatives.
+Training Data/
+Test Data/
+Submission Templates/
+data/training/
+data/test/
+data/submission/
+check_allocation.py
+
+# ---------- Node / Next.js (frontend) ----------
+node_modules/
+.pnpm-store/
+.pnp
+.pnp.*
+.next/
+out/
+.turbo/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+# Serwist (webpack variant) writes the service worker into public/
+frontend/public/sw.js
+frontend/public/sw.js.map
+frontend/public/swe-worker-*.js
+
+# ---------- Python / FastAPI (backend) ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+backend/dist/
+backend/build/
+
+# ---------- Tests & reports ----------
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# ---------- Docker ----------
+# Personal overrides (e.g. different ports); the shared docker-compose.yml is committed.
+docker-compose.override.yml
+compose.override.yml
+
+# ---------- Logs & temp ----------
+*.log
+logs/
+tmp/
+*.tmp
+
+# ---------- Media (demo video lives on YouTube, not in git) ----------
+*.mp4
+*.mov
+*.mkv
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Editors / tools ----------
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.claude/settings.local.json
