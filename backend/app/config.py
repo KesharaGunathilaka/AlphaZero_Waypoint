@@ -1,9 +1,10 @@
 from functools import lru_cache
 from typing import Literal, Self
+from uuid import uuid4
 
 from pydantic import PositiveInt, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import URL
+from sqlalchemy import URL, make_url
 
 
 class Settings(BaseSettings):
@@ -22,15 +23,24 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: str = "100/minute"
     MAX_REQUEST_BODY_BYTES: PositiveInt = 11 * 1024 * 1024
 
-    # Postgres
-    POSTGRES_HOST: str = "postgres"
-    POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: SecretStr
-    POSTGRES_DB: str
+    # Postgres: either one DATABASE_URL (Neon, as copied from its dashboard) or the POSTGRES_*
+    # parts (docker compose). DATABASE_URL wins when both are set.
+    DATABASE_URL: SecretStr | None = None
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5433
+    POSTGRES_USER: str = "waypoint"
+    POSTGRES_PASSWORD: SecretStr = SecretStr("waypoint")
+    POSTGRES_DB: str = "waypoint"
+    # Every table lives in schema wp; the database's default search_path is set to "wp, public"
+    # by db/waypoint_schema.sql, so queries can use plain table names.
 
     @property
-    def DATABASE_URL(self) -> URL:
+    def SQLALCHEMY_URL(self) -> URL:
+        if self.DATABASE_URL is not None:
+            url = make_url(self.DATABASE_URL.get_secret_value()).set(drivername="postgresql+asyncpg")
+            # asyncpg does not understand libpq options; SSL is passed in DB_CONNECT_ARGS instead.
+            query = {k: v for k, v in url.query.items() if k not in ("sslmode", "channel_binding")}
+            return url.set(query=query)
         return URL.create(
             "postgresql+asyncpg",
             username=self.POSTGRES_USER,
@@ -40,9 +50,23 @@ class Settings(BaseSettings):
             database=self.POSTGRES_DB,
         )
 
+    @property
+    def DB_CONNECT_ARGS(self) -> dict:
+        args: dict = {}
+        if self.DATABASE_URL is not None:
+            url = make_url(self.DATABASE_URL.get_secret_value())
+            if url.query.get("sslmode", "require") != "disable":
+                args["ssl"] = "require"
+            if "-pooler" in (url.host or ""):
+                # Neon's pooled endpoint is PgBouncer in transaction mode: no cached prepared statements.
+                args["statement_cache_size"] = 0
+                args["prepared_statement_name_func"] = lambda: f"__asyncpg_{uuid4()}__"
+        return args
+
     # Clerk
     CLERK_JWKS_URL: str = ""  # e.g. https://<your-domain>.clerk.accounts.dev/.well-known/jwks.json
     CLERK_ISSUER: str = ""
+    CLERK_AUDIENCE: str | None = None  # read by app/auth/auth.py; None = do not check "aud"
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
     CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 

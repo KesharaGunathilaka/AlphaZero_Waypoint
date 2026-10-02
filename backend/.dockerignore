@@ -8,4 +8,4 @@ __pycache__
 .ruff_cache
 Dockerfile
 compose.yaml
-README.md
+README.md.env

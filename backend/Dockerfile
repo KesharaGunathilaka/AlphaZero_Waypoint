@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 
-FROM python:3.13-slim AS base
+# Python version must match backend/.python-version: otherwise uv downloads its own Python
+# into the build stage only, and the runtime image cannot start the venv.
+FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
 # Dependencies
 FROM base AS deps
@@ -21,7 +24,7 @@ RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
 # Runtime
-FROM python:3.13-slim AS runner
+FROM python:3.12-slim AS runner
 WORKDIR /app
 
 RUN groupadd --system --gid 1001 fastapi && \
