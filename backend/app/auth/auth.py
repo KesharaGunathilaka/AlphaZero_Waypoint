@@ -64,7 +64,7 @@ async def require_org_admin(
 ) -> dict:
     """Dependency that additionally requires the caller to hold the Clerk org:admin role.
 
-    Use on content-management routes (long cases and their nested resources).
+    Use on content-management routes.
     """
     if payload.get("org_role") != ADMIN_ORG_ROLE:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")

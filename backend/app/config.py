@@ -46,18 +46,6 @@ class Settings(BaseSettings):
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
     CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 
-    # LLM provider credentials
-    OPENAI_API_KEY: SecretStr | None = None
-    GOOGLE_API_KEY: SecretStr | None = None
-    ANTHROPIC_API_KEY: SecretStr | None = None
-
-    # Local HuggingFace models
-    HF_MODELS_DIR: str = "./hf_models"
-    HF_DEVICE: Literal["cuda", "cpu", "mps"] = "cpu"
-
-    DEFAULT_LLM_PROVIDER: str = "openai"
-    DEFAULT_LLM_MODEL: str = "gpt-4o"
-
     @model_validator(mode="after")
     def _validate_security(self) -> Self:
         if self.ENVIRONMENT == "production":
