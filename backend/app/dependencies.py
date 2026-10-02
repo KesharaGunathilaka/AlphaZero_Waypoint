@@ -4,13 +4,13 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.auth import get_current_user_id, require_org_admin
+from app.auth.auth import get_current_user_id, require_user_role
 from app.db.session import get_db
 from app.modules.user.models import User
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
-AdminUser = Annotated[dict, Depends(require_org_admin)]
+UserRole = Annotated[dict, Depends(require_user_role)]
 
 
 async def get_current_db_user(user_id: CurrentUserId, db: DbSession) -> User:

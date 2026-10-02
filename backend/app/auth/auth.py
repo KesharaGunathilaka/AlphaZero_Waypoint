@@ -11,7 +11,12 @@ settings = get_settings()
 bearer_scheme = HTTPBearer(auto_error=False)
 credentials = Depends(bearer_scheme)
 
-ADMIN_ORG_ROLE = "org:admin"
+USER_ROLES = frozenset({
+    "org:dispatcher",
+    "org:driver",
+    "org:loader",
+    "org:store-manager",
+})
 
 
 @lru_cache
@@ -59,13 +64,13 @@ async def get_current_user_id(
     return sub
 
 
-async def require_org_admin(
+async def require_user_role(
     payload: dict = current_token_payload,
 ) -> dict:
-    """Dependency that additionally requires the caller to hold the Clerk org:admin role.
+    """Dependency that additionally requires the caller to hold a Clerk role.
 
     Use on content-management routes.
     """
-    if payload.get("org_role") != ADMIN_ORG_ROLE:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
+    if payload.get("org_role") not in USER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You do not have permission to perform this operation.")
     return payload
