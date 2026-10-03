@@ -125,7 +125,7 @@ async def plan_view(plan_id: int, user: Dispatcher, db: DbSession):
             LEFT JOIN reason_code rc ON rc.scope = 'deferral' AND rc.code = oc.suggested_reason
             WHERE oc.plan_id = :p ORDER BY oc.fcfs_rank""", {"p": plan_id}),
         "next_operating_day": await scalar(db, """
-            SELECT d FROM generate_series(CAST(:day AS date) + 1, CAST(:day AS date) + 14, interval '1 day') g(d)
+            SELECT d::date FROM generate_series(CAST(:day AS date) + 1, CAST(:day AS date) + 14, interval '1 day') g(d)
             WHERE is_working_day(d::date) ORDER BY d LIMIT 1""", {"day": plan["service_date"]}),
         "violations": await rows(db, "SELECT * FROM plan_violations(:p)", {"p": plan_id}),
         "vehicles": await rows(db, """
