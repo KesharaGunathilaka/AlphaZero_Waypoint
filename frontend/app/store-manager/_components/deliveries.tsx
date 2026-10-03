@@ -5,17 +5,15 @@ import { Eyebrow } from "@/components/waypoint/data";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
 import { RECENT_DELIVERIES } from "./data";
-import type { StoreLayout } from "./layout";
+import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 import type { StoreScreen } from "./store-manager-app";
 
 /** S1 · Deliveries: what needs the manager now, tomorrow's deliveries and the next order cutoff. */
 export function Deliveries({
-  layout,
   receiptNote,
   onNavigate,
 }: {
-  layout: StoreLayout;
   /** Set once today's delivery has been confirmed in S4. */
   receiptNote: string | null;
   onNavigate: (screen: StoreScreen) => void;
@@ -23,12 +21,12 @@ export function Deliveries({
   return (
     <>
       <div className="flex flex-col gap-1">
-        <h1 className={layout.h1}>Deliveries</h1>
+        <h1 className={storeLayout.h1}>Deliveries</h1>
         <div className="text-[13px] text-wp-text-2">Fresh Pettah · Tue 29 Sep 2026</div>
       </div>
 
       {receiptNote === null ? (
-        <div className={cn("flex flex-col gap-3 border border-wp-warn bg-wp-warn-tint p-4", layout.radius)}>
+        <div className={cn("flex flex-col gap-3 border border-wp-warn bg-wp-warn-tint p-4", storeLayout.radius)}>
           <div className="text-[11px] font-semibold tracking-[.06em] text-wp-warn">▲ NEEDS YOU</div>
           <div className="text-xl leading-[26px] font-semibold">Today’s delivery arrived at 09:42. Confirm receipt.</div>
           <div className="text-[13px] leading-[18px]">
@@ -36,7 +34,7 @@ export function Deliveries({
             lines match.
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button className={layout.button} onClick={() => onNavigate("confirm")}>
+            <Button className={storeLayout.button} onClick={() => onNavigate("confirm")}>
               Confirm receipt
             </Button>
             <span className="text-xs text-wp-text-2">Record DR-20931 · Unconfirmed for 7 h 48 min</span>
@@ -48,8 +46,8 @@ export function Deliveries({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-[15px] font-semibold">Tomorrow · Wed 30 Sep</h2>
-        <div className={cn("grid gap-4", layout.cols2)}>
-          <div className={cn(layout.card, "flex flex-col gap-3 p-4")}>
+        <div className={cn("grid gap-4", storeLayout.cols2)}>
+          <div className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-[15px] font-semibold">Fresh · Dry groceries</div>
               <StatusPill state="good">Scheduled</StatusPill>
@@ -68,7 +66,7 @@ export function Deliveries({
             </div>
           </div>
 
-          <div className={cn("flex flex-col gap-3 border border-wp-warn bg-wp-warn-tint p-4", layout.radius)}>
+          <div className={cn("flex flex-col gap-3 border border-wp-warn bg-wp-warn-tint p-4", storeLayout.radius)}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-[15px] font-semibold">Fresh · Chilled</div>
               <StatusPill state="warn">Moved</StatusPill>
@@ -86,24 +84,24 @@ export function Deliveries({
         </div>
       </section>
 
-      <div className={cn(layout.card, "flex flex-wrap items-center justify-between gap-4 p-4")}>
+      <div className={cn(storeLayout.card, "flex flex-wrap items-center justify-between gap-4 p-4")}>
         <div className="flex flex-col gap-1">
           <Eyebrow className="text-[11px]">Next order · for Thu 1 Oct</Eyebrow>
           <div className="text-xl leading-[26px] font-semibold">Closes Wed 30 Sep 16:00</div>
           <div className="text-[13px] text-wp-text-2">22 h 30 min left</div>
         </div>
-        <Button variant="secondary" className={layout.button} onClick={() => onNavigate("order")}>
+        <Button variant="secondary" className={storeLayout.button} onClick={() => onNavigate("order")}>
           Place or change order
         </Button>
       </div>
 
       <section className="flex flex-col gap-2">
         <h2 className="text-[15px] font-semibold">Recent deliveries</h2>
-        <div className={cn(layout.card, "overflow-hidden")}>
+        <div className={cn(storeLayout.card, "overflow-hidden")}>
           {RECENT_DELIVERIES.map((r, i) => (
             <div
               key={r.date}
-              className={cn("flex items-center gap-3 px-4 py-2", layout.rowHeight, i > 0 && "border-t border-wp-border")}
+              className={cn("flex items-center gap-3 px-4 py-2", storeLayout.rowHeight, i > 0 && "border-t border-wp-border")}
             >
               <div className="w-[84px] flex-none text-[13px] font-semibold">{r.date}</div>
               <div className="min-w-0 flex-1 text-[13px] text-wp-text-2">{r.what}</div>

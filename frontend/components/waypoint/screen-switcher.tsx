@@ -1,54 +1,54 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Prototype toolbar for jumping between a role's screens.
+ * Prototype navigation for jumping between a role's screens.
  * Temporary until each screen gets its own route and real data.
  */
 export function ScreenSwitcher<K extends string>({
   screens,
   current,
   onChange,
-  children,
+  className,
 }: {
   screens: readonly (readonly [K, string])[];
   current: K;
   onChange: (key: K) => void;
-  /** Extra toolbar controls, e.g. a device toggle. */
-  children?: ReactNode;
+  /** Sizing for the bar itself, e.g. to match the width of the app below it. */
+  className?: string;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-wp-border bg-wp-surface px-3 py-2 text-wp-text">
-      <span className="text-[11px] font-semibold tracking-[.06em] text-wp-muted">SCREEN</span>
-      {screens.map(([key, label]) => (
-        <SwitcherButton key={key} active={current === key} onClick={() => onChange(key)}>
-          {label}
-        </SwitcherButton>
-      ))}
-      {children}
-    </div>
+    <nav
+      aria-label="Screens"
+      className={cn(
+        "max-w-full overflow-x-auto rounded-lg border border-wp-border bg-wp-surface text-wp-text",
+        "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        className,
+      )}
+    >
+      <div role="tablist" className="flex min-w-max items-stretch px-1">
+        {screens.map(([key, label]) => (
+          <Tab key={key} active={current === key} onClick={() => onChange(key)}>
+            {label}
+          </Tab>
+        ))}
+      </div>
+    </nav>
   );
 }
 
-export function SwitcherButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
+function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) {
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={active}
       onClick={onClick}
-      aria-pressed={active}
       className={cn(
-        "h-8 cursor-pointer rounded-md border border-wp-border px-3 text-xs font-semibold",
-        active ? "bg-wp-action text-wp-on-action" : "bg-wp-surface text-wp-text",
+        "relative cursor-pointer whitespace-nowrap px-3 py-3 text-xs font-semibold transition-colors",
+        "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
+        active ? "text-wp-action after:bg-wp-action" : "text-wp-muted hover:text-wp-text",
       )}
     >
       {children}

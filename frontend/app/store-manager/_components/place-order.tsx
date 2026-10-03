@@ -5,14 +5,14 @@ import { Button, Stepper } from "@/components/waypoint/controls";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
 import { DRY_GOODS } from "./data";
-import type { StoreLayout } from "./layout";
+import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 
 const COLLAPSED_LINES = 5;
 const USUAL_ORDER = DRY_GOODS.map((g) => g.usual);
 
 /** S2 · Place order: pre-filled from the usual order, change only what differs. */
-export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: () => void }) {
+export function PlaceOrder({ onBack }: { onBack: () => void }) {
   const [qty, setQty] = useState(USUAL_ORDER);
   const [showAll, setShowAll] = useState(false);
   const [placed, setPlaced] = useState(false);
@@ -25,7 +25,7 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
 
   if (placed) {
     return (
-      <div className={cn(layout.card, "flex flex-col gap-4 p-6")}>
+      <div className={cn(storeLayout.card, "flex flex-col gap-4 p-6")}>
         <div>
           <StatusPill state="good">Order placed</StatusPill>
         </div>
@@ -38,10 +38,10 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
           cutoff on Wed 30 Sep.
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button className={layout.button} onClick={onBack}>
+          <Button className={storeLayout.button} onClick={onBack}>
             Back to Deliveries
           </Button>
-          <Button variant="secondary" className={layout.button} onClick={() => setPlaced(false)}>
+          <Button variant="secondary" className={storeLayout.button} onClick={() => setPlaced(false)}>
             Change order
           </Button>
         </div>
@@ -53,7 +53,7 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <h1 className={layout.h1}>Place order</h1>
+          <h1 className={storeLayout.h1}>Place order</h1>
           <div className="text-[13px] text-wp-text-2">Delivery Thu 1 Oct · Fresh Pettah</div>
         </div>
         <StatusPill state="info">Closes Wed 30 Sep 16:00 · 22 h 30 min left</StatusPill>
@@ -66,9 +66,9 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
         </Banner>
       )}
 
-      <div className={cn("grid items-start gap-6", layout.colsMain)}>
+      <div className={cn("grid items-start gap-6", storeLayout.colsMain)}>
         <div className="flex min-w-0 flex-col gap-4">
-          <section className={cn(layout.card, "flex flex-col gap-3 p-4")}>
+          <section className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-[15px] font-semibold">Dry groceries</h2>
               <button
@@ -85,14 +85,14 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
               aria-label="Search to add an item"
               className={cn(
                 "rounded-md border border-wp-border bg-wp-surface px-3 text-[13px] text-wp-text",
-                layout.inputHeight,
+                storeLayout.inputHeight,
               )}
             />
             <div>
               {visible.map((line, i) => (
                 <div
                   key={line.name}
-                  className={cn("flex items-center gap-3 border-t border-wp-border py-2", layout.rowHeight)}
+                  className={cn("flex items-center gap-3 border-t border-wp-border py-2", storeLayout.rowHeight)}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-[13px] font-semibold">{line.name}</div>
@@ -111,7 +111,7 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
             </LinkButton>
           </section>
 
-          <section className={cn(layout.card, "flex flex-col gap-2 p-4")}>
+          <section className={cn(storeLayout.card, "flex flex-col gap-2 p-4")}>
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-[15px] font-semibold">Chilled</h2>
               <StatusPill state="offline">Nothing due</StatusPill>
@@ -123,7 +123,7 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
           </section>
         </div>
 
-        <aside className={cn(layout.card, "flex flex-col gap-3 p-4")}>
+        <aside className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
           <h2 className="text-[15px] font-semibold">Summary</h2>
           <div className="flex justify-between text-[13px]">
             <span>Dry groceries</span>
@@ -149,7 +149,7 @@ export function PlaceOrder({ layout, onBack }: { layout: StoreLayout; onBack: ()
           </Button>
           <Button
             variant="secondary"
-            className={cn("w-full", layout.button)}
+            className={cn("w-full", storeLayout.button)}
             onClick={() =>
               setDraftNote("Draft saved at 17:31. The order is not placed until a confirmation number appears.")
             }

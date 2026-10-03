@@ -5,7 +5,7 @@ import { Button, Stepper } from "@/components/waypoint/controls";
 import { StatusPill, type Tone } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
 import { DELIVERED_LINES, ISSUE_TYPES, type DeliveredLine, type Issue, type IssueType } from "./data";
-import type { StoreLayout } from "./layout";
+import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 
 export type Receipt = { issue: Issue | null };
@@ -18,12 +18,10 @@ function lineStatus(line: DeliveredLine, issue: Issue | null): { state: Tone; la
 
 /** S4 · Confirm delivery: compare ordered, delivered and received, and report issues per line. */
 export function ConfirmDelivery({
-  layout,
   receipt,
   onConfirm,
   onBack,
 }: {
-  layout: StoreLayout;
   receipt: Receipt | null;
   onConfirm: (receipt: Receipt) => void;
   onBack: () => void;
@@ -36,7 +34,7 @@ export function ConfirmDelivery({
   if (receipt) {
     const reported = receipt.issue;
     return (
-      <div className={cn(layout.card, "flex flex-col gap-4 p-6")}>
+      <div className={cn(storeLayout.card, "flex flex-col gap-4 p-6")}>
         <div>
           <StatusPill state="good">Receipt confirmed</StatusPill>
         </div>
@@ -49,7 +47,7 @@ export function ConfirmDelivery({
             : "Recorded Tue 29 Sep 17:32 against DR-20931."}
         </div>
         <div>
-          <Button className={layout.button} onClick={onBack}>
+          <Button className={storeLayout.button} onClick={onBack}>
             Back to Deliveries
           </Button>
         </div>
@@ -63,11 +61,11 @@ export function ConfirmDelivery({
         <LinkButton onClick={onBack} className="no-underline">
           ← Deliveries
         </LinkButton>
-        <h1 className={layout.h1}>Confirm delivery</h1>
+        <h1 className={storeLayout.h1}>Confirm delivery</h1>
         <div className="text-[13px] text-wp-text-2">Fresh · Dry groceries · Order FP-4409</div>
       </div>
 
-      <div className={cn(layout.card, "grid gap-4 p-4", layout.colsReceipt)}>
+      <div className={cn(storeLayout.card, "grid gap-4 p-4", storeLayout.colsReceipt)}>
         {[
           ["DELIVERED", "Tue 29 Sep 09:42"],
           ["DRIVER · VEHICLE", "K. Perera · RT-03"],
@@ -81,11 +79,11 @@ export function ConfirmDelivery({
         ))}
       </div>
 
-      <div className={cn(layout.card, "overflow-hidden")}>
+      <div className={cn(storeLayout.card, "overflow-hidden")}>
         <div
           className={cn(
             "grid gap-2 bg-wp-surface-2 px-4 py-2 text-[10px] font-semibold tracking-[.06em] text-wp-muted",
-            layout.colsLine,
+            storeLayout.colsLine,
           )}
         >
           <span>ITEM</span>
@@ -101,8 +99,8 @@ export function ConfirmDelivery({
               <div
                 className={cn(
                   "grid items-center gap-2 px-4 py-2 text-[13px] tabular-nums",
-                  layout.colsLine,
-                  layout.rowHeight,
+                  storeLayout.colsLine,
+                  storeLayout.rowHeight,
                 )}
               >
                 <span className="font-semibold">{line.name}</span>
@@ -129,7 +127,7 @@ export function ConfirmDelivery({
                         onClick={() => setIssueType(type)}
                         className={cn(
                           "cursor-pointer rounded-md border px-3 text-xs font-semibold",
-                          layout.inputHeight,
+                          storeLayout.inputHeight,
                           issueType === type
                             ? "border-wp-action bg-wp-action text-wp-on-action"
                             : "border-wp-border bg-wp-surface text-wp-text",
@@ -141,13 +139,13 @@ export function ConfirmDelivery({
                   </div>
                   <div className="flex flex-wrap items-center gap-4">
                     <Stepper label="Quantity affected" value={issueQty} onChange={(v) => setIssueQty(Math.max(1, v))} />
-                    <Button variant="secondary" className={layout.button}>
+                    <Button variant="secondary" className={storeLayout.button}>
                       Add photo
                     </Button>
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     <Button
-                      className={layout.button}
+                      className={storeLayout.button}
                       onClick={() => {
                         setIssue({ type: issueType, qty: issueQty });
                         setPanelOpen(false);

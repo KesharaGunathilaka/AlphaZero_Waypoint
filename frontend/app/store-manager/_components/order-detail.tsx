@@ -6,7 +6,7 @@ import { Timeline } from "@/components/waypoint/data";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
 import { CHILLED_LINES, CHILLED_ORDER_TIMELINE } from "./data";
-import type { StoreLayout } from "./layout";
+import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 
 const COLLAPSED_LINES = 4;
@@ -21,7 +21,7 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** S3 · Order detail: why the chilled order moved and where it is now. */
-export function OrderDetail({ layout, onBack }: { layout: StoreLayout; onBack: () => void }) {
+export function OrderDetail({ onBack }: { onBack: () => void }) {
   const [showAll, setShowAll] = useState(false);
   const lines = showAll ? CHILLED_LINES : CHILLED_LINES.slice(0, COLLAPSED_LINES);
 
@@ -31,14 +31,14 @@ export function OrderDetail({ layout, onBack }: { layout: StoreLayout; onBack: (
         <LinkButton onClick={onBack} className="no-underline">
           ← Deliveries
         </LinkButton>
-        <h1 className={layout.h1}>Order FP-4418 · Chilled</h1>
+        <h1 className={storeLayout.h1}>Order FP-4418 · Chilled</h1>
         <div className="text-[13px] text-wp-text-2">Fresh Pettah · Placed Mon 28 Sep 14:10</div>
       </div>
       <Banner state="warn">This order is moved from Wed 30 Sep to Thu 1 Oct.</Banner>
 
-      <div className={cn("grid items-start gap-6", layout.colsMain)}>
+      <div className={cn("grid items-start gap-6", storeLayout.colsMain)}>
         <div className="flex min-w-0 flex-col gap-4">
-          <section className={cn(layout.card, "flex flex-col gap-4 p-4")}>
+          <section className={cn(storeLayout.card, "flex flex-col gap-4 p-4")}>
             <Section label="WHY">
               <div className="mt-1 text-base leading-[22px]">
                 No refrigerated van that can reach your store was free on Wed 30 Sep.
@@ -56,21 +56,21 @@ export function OrderDetail({ layout, onBack }: { layout: StoreLayout; onBack: (
               </div>
             </Section>
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant="secondary" className={layout.button}>
+              <Button variant="secondary" className={storeLayout.button}>
                 ☎ Contact dispatch desk
               </Button>
               <span className="text-xs text-wp-muted">For anything urgent</span>
             </div>
           </section>
 
-          <section className={cn(layout.card, "flex flex-col gap-1 p-4")}>
+          <section className={cn(storeLayout.card, "flex flex-col gap-1 p-4")}>
             <h2 className="mb-2 text-[15px] font-semibold">Order lines</h2>
             {lines.map((line) => (
               <div
                 key={line.name}
                 className={cn(
                   "flex items-center justify-between gap-2 border-t border-wp-border text-[13px]",
-                  layout.rowHeight,
+                  storeLayout.rowHeight,
                 )}
               >
                 <span>{line.name}</span>
@@ -83,7 +83,7 @@ export function OrderDetail({ layout, onBack }: { layout: StoreLayout; onBack: (
           </section>
         </div>
 
-        <aside className={cn(layout.card, "flex flex-col gap-3 p-4")}>
+        <aside className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
           <h2 className="text-[15px] font-semibold">Where it is</h2>
           <Timeline steps={CHILLED_ORDER_TIMELINE} />
         </aside>
