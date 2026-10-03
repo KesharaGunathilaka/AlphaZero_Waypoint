@@ -4,7 +4,7 @@ import { Button } from "@/components/waypoint/controls";
 import { Eyebrow } from "@/components/waypoint/data";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
-import { RECENT_DELIVERIES } from "./data";
+import { RECENT_DELIVERIES, type OrderId } from "./data";
 import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 import type { StoreScreen } from "./store-manager-app";
@@ -12,10 +12,12 @@ import type { StoreScreen } from "./store-manager-app";
 /** S1 · Deliveries: what needs the manager now, tomorrow's deliveries and the next order cutoff. */
 export function Deliveries({
   receiptNote,
+  onOpenOrder,
   onNavigate,
 }: {
   /** Set once today's delivery has been confirmed in S4. */
   receiptNote: string | null;
+  onOpenOrder: (id: OrderId) => void;
   onNavigate: (screen: StoreScreen) => void;
 }) {
   return (
@@ -62,7 +64,7 @@ export function Deliveries({
             </div>
             <div className="flex justify-between text-xs text-wp-muted">
               <span>Order FP-4417</span>
-              <LinkButton onClick={() => onNavigate("detail")}>Details</LinkButton>
+              <LinkButton onClick={() => onOpenOrder("FP-4417")}>Details</LinkButton>
             </div>
           </div>
 
@@ -78,7 +80,7 @@ export function Deliveries({
             </div>
             <div className="flex justify-between text-xs text-wp-muted">
               <span>Order FP-4418</span>
-              <LinkButton onClick={() => onNavigate("detail")}>See why and what changes</LinkButton>
+              <LinkButton onClick={() => onOpenOrder("FP-4418")}>See why and what changes</LinkButton>
             </div>
           </div>
         </div>

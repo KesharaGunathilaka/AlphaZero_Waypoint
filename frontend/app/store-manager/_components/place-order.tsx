@@ -14,6 +14,7 @@ const USUAL_ORDER = DRY_GOODS.map((g) => g.usual);
 /** S2 · Place order: pre-filled from the usual order, change only what differs. */
 export function PlaceOrder({ onBack }: { onBack: () => void }) {
   const [qty, setQty] = useState(USUAL_ORDER);
+  const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [placed, setPlaced] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -21,7 +22,14 @@ export function PlaceOrder({ onBack }: { onBack: () => void }) {
 
   const lineCount = qty.filter((q) => q > 0).length;
   const totalQty = qty.reduce((sum, q) => sum + q, 0);
-  const visible = showAll ? DRY_GOODS : DRY_GOODS.slice(0, COLLAPSED_LINES);
+
+  // Lines keep their index into `qty`, so filtering never moves a quantity to another item.
+  const term = search.trim().toLowerCase();
+  const matches = DRY_GOODS.map((line, index) => ({ line, index })).filter(({ line }) =>
+    line.name.toLowerCase().includes(term),
+  );
+  const searching = term.length > 0;
+  const visible = searching || showAll ? matches : matches.slice(0, COLLAPSED_LINES);
 
   if (placed) {
     return (
@@ -81,15 +89,18 @@ export function PlaceOrder({ onBack }: { onBack: () => void }) {
             </div>
             <div className="text-xs text-wp-muted">Pre-filled from your usual order. Change only what differs.</div>
             <input
-              placeholder="Search to add an item"
-              aria-label="Search to add an item"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search your items"
+              aria-label="Search your items"
               className={cn(
                 "rounded-md border border-wp-border bg-wp-surface px-3 text-[13px] text-wp-text",
                 storeLayout.inputHeight,
               )}
             />
             <div>
-              {visible.map((line, i) => (
+              {visible.map(({ line, index }) => (
                 <div
                   key={line.name}
                   className={cn("flex items-center gap-3 border-t border-wp-border py-2", storeLayout.rowHeight)}
@@ -100,15 +111,22 @@ export function PlaceOrder({ onBack }: { onBack: () => void }) {
                   </div>
                   <Stepper
                     label={line.name}
-                    value={qty[i]}
-                    onChange={(v) => setQty((q) => q.map((x, j) => (j === i ? Math.max(0, v) : x)))}
+                    value={qty[index]}
+                    onChange={(v) => setQty((q) => q.map((x, j) => (j === index ? Math.max(0, v) : x)))}
                   />
                 </div>
               ))}
+              {visible.length === 0 && (
+                <div className="border-t border-wp-border py-3 text-[13px] text-wp-text-2">
+                  No item matches “{search.trim()}”.
+                </div>
+              )}
             </div>
-            <LinkButton onClick={() => setShowAll(!showAll)}>
-              {showAll ? "Show fewer lines" : `Show ${DRY_GOODS.length - COLLAPSED_LINES} more lines`}
-            </LinkButton>
+            {!searching && (
+              <LinkButton onClick={() => setShowAll(!showAll)}>
+                {showAll ? "Show fewer lines" : `Show ${DRY_GOODS.length - COLLAPSED_LINES} more lines`}
+              </LinkButton>
+            )}
           </section>
 
           <section className={cn(storeLayout.card, "flex flex-col gap-2 p-4")}>

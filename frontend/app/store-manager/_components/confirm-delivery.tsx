@@ -4,14 +4,18 @@ import { useState } from "react";
 import { Button, Stepper } from "@/components/waypoint/controls";
 import { StatusPill, type Tone } from "@/components/waypoint/status";
 import { cn } from "@/lib/utils";
-import { DELIVERED_LINES, ISSUE_TYPES, type DeliveredLine, type Issue, type IssueType } from "./data";
+import { DELIVERED_LINES, ISSUE_TYPES, type DeliveredLine, type Issue, type ReportedIssue } from "./data";
 import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 
-export type Receipt = { issue: Issue | null };
+export type Receipt = { issues: ReportedIssue[] };
 
-function lineStatus(line: DeliveredLine, issue: Issue | null): { state: Tone; label: string } {
-  if (line.reportable && issue) return { state: "crit", label: `${issue.type} ${issue.qty}` };
+/** Issues are numbered in delivery order, from the first free reference in this prototype. */
+const FIRST_REFERENCE = 7720;
+const EMPTY_ISSUE: Issue = { type: "Damaged", qty: 1 };
+
+function lineStatus(line: DeliveredLine, issue: Issue | undefined): { state: Tone; label: string } {
+  if (issue) return { state: "crit", label: `${issue.type} ${issue.qty}` };
   if (line.delivered < line.ordered) return { state: "warn", label: `Short ${line.ordered - line.delivered} at loading` };
   return { state: "good", label: `Received ${line.delivered}` };
 }
@@ -26,26 +30,69 @@ export function ConfirmDelivery({
   onConfirm: (receipt: Receipt) => void;
   onBack: () => void;
 }) {
-  const [issue, setIssue] = useState<Issue | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [issueType, setIssueType] = useState<IssueType>("Damaged");
-  const [issueQty, setIssueQty] = useState(1);
+  /** Reported issues, keyed by line name. */
+  const [issues, setIssues] = useState<Record<string, Issue>>({});
+  /** The line whose report panel is open, and the unsaved values in it. */
+  const [openLine, setOpenLine] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Issue>(EMPTY_ISSUE);
+
+  const reported = DELIVERED_LINES.filter((line) => issues[line.name]).map((line, i) => ({
+    line: line.name,
+    reference: `IS-${FIRST_REFERENCE + i}`,
+    ...issues[line.name],
+  }));
+
+  function openPanel(line: DeliveredLine) {
+    if (openLine === line.name) return setOpenLine(null);
+    setDraft(issues[line.name] ?? EMPTY_ISSUE);
+    setOpenLine(line.name);
+  }
+
+  function saveIssue(name: string) {
+    setIssues((current) => ({ ...current, [name]: draft }));
+    setOpenLine(null);
+  }
+
+  function removeIssue(name: string) {
+    setIssues((current) => {
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+    setOpenLine(null);
+  }
 
   if (receipt) {
-    const reported = receipt.issue;
+    const count = receipt.issues.length;
     return (
       <div className={cn(storeLayout.card, "flex flex-col gap-4 p-6")}>
         <div>
           <StatusPill state="good">Receipt confirmed</StatusPill>
         </div>
         <div className="text-xl leading-[26px] font-semibold">
-          {reported ? "Confirmed with 1 issue. Reference IS-7720." : "Confirmed. Everything arrived as shown."}
+          {count === 0
+            ? "Confirmed. Everything arrived as shown."
+            : `Confirmed with ${count} ${count === 1 ? "issue" : "issues"}.`}
         </div>
-        <div className="text-[13px] leading-[18px] text-wp-text-2">
-          {reported
-            ? `Coconut oil 1 L: ${reported.type}, ${reported.qty} unit(s). Dispatch has the record. Confirmed Tue 29 Sep 17:32.`
-            : "Recorded Tue 29 Sep 17:32 against DR-20931."}
-        </div>
+        {count === 0 ? (
+          <div className="text-[13px] leading-[18px] text-wp-text-2">Recorded Tue 29 Sep 17:32 against DR-20931.</div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {receipt.issues.map((issue) => (
+              <div key={issue.line} className="flex flex-wrap items-baseline gap-x-2 text-[13px] leading-[18px]">
+                <span className="font-semibold">{issue.line}</span>
+                <span className="text-wp-text-2">
+                  {issue.type}, {issue.qty} unit{issue.qty === 1 ? "" : "s"}
+                  {issue.photo ? " · photo attached" : ""}
+                </span>
+                <span className="font-semibold text-wp-crit tabular-nums">{issue.reference}</span>
+              </div>
+            ))}
+            <div className="text-[13px] leading-[18px] text-wp-text-2">
+              Dispatch has the record. Confirmed Tue 29 Sep 17:32 against DR-20931.
+            </div>
+          </div>
+        )}
         <div>
           <Button className={storeLayout.button} onClick={onBack}>
             Back to Deliveries
@@ -93,7 +140,9 @@ export function ConfirmDelivery({
         </div>
 
         {DELIVERED_LINES.map((line) => {
+          const issue = issues[line.name];
           const status = lineStatus(line, issue);
+          const open = openLine === line.name;
           return (
             <div key={line.name} className="border-t border-wp-border">
               <div
@@ -108,14 +157,14 @@ export function ConfirmDelivery({
                 <span>{line.delivered}</span>
                 <span className="flex flex-wrap items-center gap-2">
                   <StatusPill state={status.state}>{status.label}</StatusPill>
-                  {line.reportable && (
-                    <LinkButton onClick={() => setPanelOpen(!panelOpen)}>{issue ? "Edit" : "Report issue"}</LinkButton>
-                  )}
+                  <LinkButton onClick={() => openPanel(line)} aria-expanded={open}>
+                    {issue ? "Edit" : "Report issue"}
+                  </LinkButton>
                 </span>
               </div>
               {line.note && <div className="px-4 pb-3 text-xs leading-4 text-wp-text-2">{line.note}</div>}
 
-              {line.reportable && panelOpen && (
+              {open && (
                 <div className="mx-4 mb-4 flex flex-col gap-3 rounded-lg border border-wp-border bg-wp-canvas p-4">
                   <div className="text-[13px] font-semibold">What went wrong with {line.name}?</div>
                   <div className="flex flex-wrap gap-2">
@@ -123,12 +172,12 @@ export function ConfirmDelivery({
                       <button
                         key={type}
                         type="button"
-                        aria-pressed={issueType === type}
-                        onClick={() => setIssueType(type)}
+                        aria-pressed={draft.type === type}
+                        onClick={() => setDraft((d) => ({ ...d, type }))}
                         className={cn(
                           "cursor-pointer rounded-md border px-3 text-xs font-semibold",
                           storeLayout.inputHeight,
-                          issueType === type
+                          draft.type === type
                             ? "border-wp-action bg-wp-action text-wp-on-action"
                             : "border-wp-border bg-wp-surface text-wp-text",
                         )}
@@ -137,23 +186,30 @@ export function ConfirmDelivery({
                       </button>
                     ))}
                   </div>
-                  <div className="flex flex-wrap items-center gap-4">
-                    <Stepper label="Quantity affected" value={issueQty} onChange={(v) => setIssueQty(Math.max(1, v))} />
-                    <Button variant="secondary" className={storeLayout.button}>
-                      Add photo
-                    </Button>
+                  <div className="flex flex-wrap items-end gap-4">
+                    <Stepper
+                      label="Quantity affected"
+                      value={draft.qty}
+                      onChange={(qty) =>
+                        setDraft((d) => ({ ...d, qty: Math.min(Math.max(1, qty), Math.max(1, line.delivered)) }))
+                      }
+                    />
+                    <PhotoPicker
+                      line={line.name}
+                      photo={draft.photo}
+                      onChange={(photo) => setDraft((d) => ({ ...d, photo }))}
+                    />
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      className={storeLayout.button}
-                      onClick={() => {
-                        setIssue({ type: issueType, qty: issueQty });
-                        setPanelOpen(false);
-                      }}
-                    >
-                      Add issue
+                    <Button className={storeLayout.button} onClick={() => saveIssue(line.name)}>
+                      {issue ? "Save issue" : "Add issue"}
                     </Button>
-                    <LinkButton onClick={() => setPanelOpen(false)}>Cancel</LinkButton>
+                    <LinkButton onClick={() => setOpenLine(null)}>Cancel</LinkButton>
+                    {issue && (
+                      <LinkButton className="text-wp-crit" onClick={() => removeIssue(line.name)}>
+                        Remove issue
+                      </LinkButton>
+                    )}
                   </div>
                 </div>
               )}
@@ -163,15 +219,58 @@ export function ConfirmDelivery({
       </div>
 
       <div className="flex flex-col items-start gap-3">
-        <Button className="min-h-14 px-6 text-base" onClick={() => onConfirm({ issue })}>
-          {issue ? "Confirm with 1 issue" : "Everything arrived as shown"}
+        <Button className="min-h-14 px-6 text-base" onClick={() => onConfirm({ issues: reported })}>
+          {reported.length === 0
+            ? "Everything arrived as shown"
+            : `Confirm with ${reported.length} ${reported.length === 1 ? "issue" : "issues"}`}
         </Button>
         <div className="text-xs leading-4 text-wp-muted">
-          {issue
+          {reported.length > 0
             ? "A reference number is issued for each issue and sent to dispatch."
             : "Dhal 1 kg is confirmed as 12 received, 3 short at loading."}
         </div>
       </div>
     </>
+  );
+}
+
+/** The photo button opens the camera on a phone and the file picker on a desktop. */
+function PhotoPicker({
+  line,
+  photo,
+  onChange,
+}: {
+  line: string;
+  photo: string | undefined;
+  onChange: (photo: string | undefined) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold text-wp-text-2">Photo</span>
+      <div className="flex items-center gap-2">
+        <label
+          className={cn(
+            "inline-flex cursor-pointer items-center justify-center rounded-md border border-wp-border px-4 text-xs leading-4 font-semibold",
+            storeLayout.button,
+          )}
+        >
+          {photo ? "Replace photo" : "Add photo"}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            aria-label={`Add a photo of ${line}`}
+            className="sr-only"
+            onChange={(e) => onChange(e.target.files?.[0]?.name)}
+          />
+        </label>
+        {photo && (
+          <span className="flex items-center gap-2 text-xs text-wp-text-2">
+            <span className="max-w-40 truncate">{photo}</span>
+            <LinkButton onClick={() => onChange(undefined)}>Remove</LinkButton>
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

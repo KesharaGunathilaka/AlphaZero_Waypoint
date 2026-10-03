@@ -2,6 +2,13 @@
 
 import { cn } from "@/lib/utils";
 
+const CHROME = {
+  /** Standalone bar floating above the app it drives. */
+  card: "rounded-lg border border-wp-border bg-wp-surface px-1",
+  /** Sits inside a header, so it brings no surface of its own. */
+  inline: "",
+} as const;
+
 /**
  * Prototype navigation for jumping between a role's screens.
  * Temporary until each screen gets its own route and real data.
@@ -10,24 +17,26 @@ export function ScreenSwitcher<K extends string>({
   screens,
   current,
   onChange,
+  variant = "card",
   className,
 }: {
   screens: readonly (readonly [K, string])[];
   current: K;
   onChange: (key: K) => void;
-  /** Sizing for the bar itself, e.g. to match the width of the app below it. */
+  variant?: keyof typeof CHROME;
+  /** Sizing for the bar itself, e.g. to stretch it to the height of a header. */
   className?: string;
 }) {
   return (
     <nav
       aria-label="Screens"
       className={cn(
-        "max-w-full overflow-x-auto rounded-lg border border-wp-border bg-wp-surface text-wp-text",
-        "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "max-w-full overflow-x-auto text-wp-text [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        CHROME[variant],
         className,
       )}
     >
-      <div role="tablist" className="flex min-w-max items-stretch px-1">
+      <div role="tablist" className="flex h-full min-w-max items-stretch">
         {screens.map(([key, label]) => (
           <Tab key={key} active={current === key} onClick={() => onChange(key)}>
             {label}
