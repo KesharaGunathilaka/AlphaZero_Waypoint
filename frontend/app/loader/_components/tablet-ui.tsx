@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/components/waypoint/status";
+import type { PlanVersion } from "./data";
 
 // Building blocks for the loader's shared dock tablet: dark theme, 56px+ touch targets.
 
@@ -41,12 +42,15 @@ export function TabletPill({ tone, children, className }: { tone: Tone; children
   );
 }
 
-export function LiveStatus() {
+/** Who is signed in to the shared tablet, and which plan the dock is working to. */
+export function LiveStatus({ plan }: { plan: PlanVersion }) {
   return (
     <div className="flex items-center gap-4">
       <span className="text-wp-text-2">Nuwan</span>
       <TabletPill tone="good">● Live</TabletPill>
-      <span className="font-semibold">Plan v18 · 03:48</span>
+      <span className="font-semibold">
+        Plan {plan.version} · {plan.at}
+      </span>
     </div>
   );
 }
