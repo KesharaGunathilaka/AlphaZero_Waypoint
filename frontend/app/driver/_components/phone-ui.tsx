@@ -1,25 +1,30 @@
 "use client";
 
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { MenuButton, NavDrawer } from "./driver-nav";
 
 // Building blocks for the driver's phone screens: large type and 44–56px touch targets.
 
+/** A 360×800 handset — the small end of the phones drivers actually carry. */
 export function PhoneScreen({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div
       data-screen-label={label}
-      className="flex h-[844px] w-[390px] max-w-full flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas text-base"
+      className="relative flex h-[800px] max-h-[calc(100dvh-2rem)] max-sm:max-h-[calc(100dvh-6rem)] w-[360px] max-w-full flex-col overflow-hidden rounded-[22px] border border-wp-border bg-wp-canvas text-base shadow-lg"
     >
       {children}
+      <NavDrawer />
     </div>
   );
 }
 
+/** Carries the drawer handle on every screen, then lays the screen's own header out beside it. */
 export function TopBar({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-wp-border bg-wp-surface px-4 py-3">
-      {children}
+    <div className="flex items-center gap-3 border-b border-wp-border bg-wp-surface px-3 py-3">
+      <MenuButton />
+      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">{children}</div>
     </div>
   );
 }
@@ -50,6 +55,9 @@ const BIG_BUTTON_VARIANTS = {
   plain: "border border-wp-border",
 } as const;
 
+const BIG_BUTTON_BASE =
+  "flex h-14 shrink-0 cursor-pointer items-center justify-center rounded-xl px-2 text-center text-base leading-tight font-semibold";
+
 export function BigButton({
   variant = "primary",
   className,
@@ -60,13 +68,23 @@ export function BigButton({
     <button
       type={type}
       className={cn(
-        "flex h-14 cursor-pointer items-center justify-center rounded-xl text-base font-semibold",
+        BIG_BUTTON_BASE,
+        "disabled:cursor-not-allowed disabled:opacity-50",
         BIG_BUTTON_VARIANTS[variant],
         className,
       )}
       {...props}
     />
   );
+}
+
+/** A BigButton that leaves the app — a `tel:` dial or a hand-off to the phone's map. */
+export function BigLink({
+  variant = "primary",
+  className,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: keyof typeof BIG_BUTTON_VARIANTS }) {
+  return <a className={cn(BIG_BUTTON_BASE, BIG_BUTTON_VARIANTS[variant], className)} {...props} />;
 }
 
 /** Large selectable tile, used for delivery outcomes and problem types. */

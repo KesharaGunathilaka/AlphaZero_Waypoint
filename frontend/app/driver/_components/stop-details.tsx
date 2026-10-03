@@ -1,7 +1,8 @@
 "use client";
 
-import type { DriverScreen } from "./driver-app";
-import { BigButton, Body, BottomBar, Card, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
+import { CURRENT_STOP, navigationUrl } from "./data";
+import type { DriverScreen } from "./driver-nav";
+import { BigButton, BigLink, Body, BottomBar, Card, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
 
 /** R2 · Stop details: where to unload, who to ask for, and what is on board for this stop. */
 export function StopDetails({ onNavigate }: { onNavigate: (screen: DriverScreen) => void }) {
@@ -36,14 +37,14 @@ export function StopDetails({ onNavigate }: { onNavigate: (screen: DriverScreen)
           <div className="flex items-center justify-between gap-2">
             <div>
               <div className="text-xs text-wp-muted">Store contact</div>
-              <div className="font-semibold">Nimal Perera</div>
+              <div className="font-semibold">{CURRENT_STOP.contact.name}</div>
             </div>
-            <button
-              type="button"
-              className="flex h-11 cursor-pointer items-center rounded-[10px] border border-wp-action px-4 font-semibold text-wp-action"
+            <a
+              href={`tel:${CURRENT_STOP.contact.tel}`}
+              className="flex h-11 flex-shrink-0 items-center rounded-[10px] border border-wp-action px-4 font-semibold text-wp-action"
             >
               ☎ Call
-            </button>
+            </a>
           </div>
         </Card>
 
@@ -67,9 +68,17 @@ export function StopDetails({ onNavigate }: { onNavigate: (screen: DriverScreen)
         </Card>
       </Body>
       <BottomBar className="flex flex-col items-center gap-2">
-        <BigButton className="w-full" onClick={() => onNavigate("deliver")}>
-          I’ve arrived
-        </BigButton>
+        <div className="grid w-full grid-cols-2 gap-2">
+          <BigLink
+            variant="outline"
+            href={navigationUrl(CURRENT_STOP.destination)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Navigate
+          </BigLink>
+          <BigButton onClick={() => onNavigate("deliver")}>I’ve arrived</BigButton>
+        </div>
         <button
           type="button"
           onClick={() => onNavigate("problem")}

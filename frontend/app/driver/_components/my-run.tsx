@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import type { DriverScreen } from "./driver-app";
-import { BigButton, Body, BottomBar, Card, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
+import { CURRENT_STOP, DISPATCHER, navigationUrl } from "./data";
+import type { DriverScreen } from "./driver-nav";
+import { BigButton, BigLink, Body, BottomBar, Card, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
 
 const UPCOMING = [
   { glyph: "●", stop: "5 Fresh Pettah", time: "07:12", current: true },
@@ -67,7 +68,14 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
             ▲ Short-loaded: Chilled 2 crates short
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <BigButton variant="outline">Navigate</BigButton>
+            <BigLink
+              variant="outline"
+              href={navigationUrl(CURRENT_STOP.destination)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Navigate
+            </BigLink>
             <BigButton onClick={() => onNavigate("stop")}>Open stop</BigButton>
           </div>
         </Card>
@@ -98,14 +106,16 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
         <BigButton variant="plain" onClick={() => onNavigate("problem")}>
           ⚑ Report a problem
         </BigButton>
-        <BigButton variant="plain">☎ Call dispatcher</BigButton>
+        <BigLink variant="plain" href={`tel:${DISPATCHER.tel}`}>
+          ☎ Call dispatcher
+        </BigLink>
       </BottomBar>
     </PhoneScreen>
   );
 }
 
 /** R1 · My run, while moving: read-only so the driver is not tempted to tap. */
-export function MyRunMoving() {
+export function MyRunMoving({ onNavigate }: { onNavigate: (screen: DriverScreen) => void }) {
   return (
     <PhoneScreen label="R1 Moving">
       <RunHeader offline={false} />
@@ -120,8 +130,13 @@ export function MyRunMoving() {
           <div className="text-wp-text-2">4.2 km · Unload at rear dock</div>
         </Card>
       </Body>
-      <BottomBar>
-        <BigButton className="w-full">☎ Call dispatcher</BigButton>
+      <BottomBar className="flex flex-col gap-2">
+        <BigLink className="w-full" href={`tel:${DISPATCHER.tel}`}>
+          ☎ Call dispatcher
+        </BigLink>
+        <BigButton variant="plain" className="h-11 w-full" onClick={() => onNavigate("run")}>
+          I’ve parked · back to my run
+        </BigButton>
       </BottomBar>
     </PhoneScreen>
   );

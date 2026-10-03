@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { BigButton, Body, BottomBar, Card, ChoiceTile, PhoneScreen, SectionLabel, TopBar } from "./phone-ui";
+import { DISPATCHER } from "./data";
+import { BigButton, BigLink, Body, BottomBar, Card, ChoiceTile, PhoneScreen, SectionLabel, TopBar } from "./phone-ui";
 
 const PROBLEMS = [
   "Running late",
@@ -27,7 +28,7 @@ export function ReportProblem({ onClose }: { onClose: () => void }) {
         </button>
       </TopBar>
       <Body>
-        <BigButton>☎ Call dispatcher now</BigButton>
+        <BigLink href={`tel:${DISPATCHER.tel}`}>☎ Call dispatcher now</BigLink>
         <div className="rounded-xl bg-wp-offline-tint p-3 leading-[22px] font-semibold text-wp-offline">
           ○ No signal. Your report is kept on this phone and sent automatically. Call if it can’t wait.
         </div>
