@@ -2,7 +2,9 @@
 
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { formatTime } from "@/lib/format";
 import { MenuButton, NavDrawer } from "./driver-nav";
+import { useRun } from "./use-run";
 
 // Building blocks for the driver's phone screens: large type and 44–56px touch targets.
 
@@ -109,14 +111,61 @@ export function ChoiceTile({
   );
 }
 
-export function SyncPill({ offline, pending = 3 }: { offline: boolean; pending?: number }) {
-  return offline ? (
-    <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold text-wp-offline">
-      ○ Offline · {pending} to send
+/** Where the phone's records are: all sent, sending, or waiting for signal. Never claims more than it knows. */
+export function SyncPill() {
+  const { outbox } = useRun();
+  if (!outbox.online) {
+    return (
+      <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-offline">
+        ○ Offline · {outbox.pending} to send
+      </div>
+    );
+  }
+  if (outbox.pending > 0) {
+    return (
+      <div className="rounded-full bg-wp-info-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-info">
+        ● Sending {outbox.pending}…
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-good">
+      ✓ Synced{outbox.lastSyncAt ? ` ${formatTime(outbox.lastSyncAt)}` : ""}
     </div>
-  ) : (
-    <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold text-wp-good">
-      ✓ Synced 06:31
-    </div>
+  );
+}
+
+/**
+ * The degradation screen's message: working without signal is normal, and nothing is lost.
+ * Records the server refused (a stop changed by dispatch, say) are listed, never dropped silently.
+ */
+export function OfflineBanner() {
+  const { outbox, fromCache, run } = useRun();
+  return (
+    <>
+      {!outbox.online && (
+        <div className="rounded-xl bg-wp-offline-tint p-3 leading-[22px] font-semibold text-wp-offline">
+          ○ No signal{outbox.simulated ? " (simulated)" : ""}. Everything you record is saved on this phone and sent
+          when signal returns.
+          {outbox.pending > 0 && <div className="text-[13px] font-normal">{outbox.pending} waiting to send.</div>}
+        </div>
+      )}
+      {outbox.online && fromCache && run && (
+        <div className="rounded-xl bg-wp-info-tint p-3 text-[13px] leading-[18px] font-semibold text-wp-info">
+          ● Showing the run saved on this phone. Updating…
+        </div>
+      )}
+      {outbox.rejected.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-xl border border-wp-warn bg-wp-warn-tint p-3 text-[13px] leading-[18px] text-wp-warn">
+          <b>▲ Dispatch did not accept {outbox.rejected.length === 1 ? "a record" : `${outbox.rejected.length} records`}:</b>
+          {outbox.rejected.slice(0, 3).map((r) => (
+            <span key={r.event_id}>{r.reject_reason}</span>
+          ))}
+          <button type="button" onClick={outbox.dismissRejected} className="self-start font-semibold underline">
+            Got it · call dispatch if unsure
+          </button>
+        </div>
+      )}
+    </>
   );
 }
