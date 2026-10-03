@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, CurrentUserDep, DbSession, require_roles
+from app import storage
 from app.modules.common import not_found, one, rows, scalar
 
 router = APIRouter(tags=["Loader and driver"])
@@ -141,29 +142,42 @@ async def upload(
     if not data or len(data) > 5 * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Files up to 5 MB")
     aid = attachment_id or uuid4()
-    key = f"att/{aid}"
-    await rows(db, "INSERT INTO attachment_blob(storage_key, data) VALUES (:k, :b) ON CONFLICT DO NOTHING RETURNING 1",
-               {"k": key, "b": data})
+    key = f"attachments/{aid}"
+    content_type = file.content_type or "application/octet-stream"
+    await storage.put(db, key, data, content_type)
     await rows(db, """
         INSERT INTO attachment(attachment_id, kind, delivery_id, flag_id, issue_id, storage_key, content_type, bytes,
                                sha256, uploaded_by, device_time)
         VALUES (:a, :k, :d, :f, :i, :key, :ct, :n, :h, :u, COALESCE(:dt, now()))
         ON CONFLICT (attachment_id) DO NOTHING RETURNING 1""",
         {"a": aid, "k": kind, "d": delivery_id, "f": flag_id, "i": issue_id, "key": key,
-         "ct": file.content_type or "application/octet-stream", "n": len(data),
+         "ct": content_type, "n": len(data),
          "h": hashlib.sha256(data).hexdigest(), "u": user.user_id, "dt": device_time})
     await db.commit()
-    return {"attachment_id": aid}
+    return {"attachment_id": aid, "url": await storage.view_url(str(aid), key)}
 
 
 @router.get("/attachments/{attachment_id}")
-async def download(attachment_id: UUID, user: CurrentUserDep, db: DbSession):
-    row = await one(db, """
-        SELECT a.content_type, b.data FROM attachment a JOIN attachment_blob b ON b.storage_key = a.storage_key
-        WHERE a.attachment_id = :a""", {"a": attachment_id})
+async def view(attachment_id: UUID, user: CurrentUserDep, db: DbSession):
+    """A short-lived link to show the image (an <img> tag cannot send the sign-in token)."""
+    row = await one(db, "SELECT attachment_id, kind, content_type, storage_key FROM attachment WHERE attachment_id = :a",
+                    {"a": attachment_id})
     if row is None:
         raise not_found("Attachment")
-    return Response(content=bytes(row["data"]), media_type=row["content_type"])
+    return {"attachment_id": attachment_id, "kind": row["kind"], "content_type": row["content_type"],
+            "url": await storage.view_url(str(attachment_id), row["storage_key"])}
+
+
+@router.get("/attachments/{attachment_id}/raw", include_in_schema=False)
+async def raw(attachment_id: UUID, expires: int, signature: str, db: DbSession):
+    """Image bytes for the "db" storage backend, behind the signed link from GET /attachments/{id}."""
+    if not storage.link_is_valid(str(attachment_id), expires, signature):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Link expired or invalid")
+    row = await one(db, "SELECT content_type, storage_key FROM attachment WHERE attachment_id = :a", {"a": attachment_id})
+    data = await storage.get(db, row["storage_key"]) if row else None
+    if data is None:
+        raise not_found("Attachment")
+    return Response(content=data, media_type=row["content_type"], headers={"Cache-Control": "private, max-age=3600"})
 
 
 # ------------------------------------------------------------------ demo ----

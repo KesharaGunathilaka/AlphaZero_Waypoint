@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, DbSession, require_roles
-from app.modules.common import not_found, one, rows
+from app.modules.common import not_found, one, rows, scalar
 
 router = APIRouter(prefix="/store", tags=["Store manager"])
 StoreUser = Annotated[CurrentUser, Depends(require_roles("store_manager"))]
@@ -62,6 +62,14 @@ async def products(user: StoreUser, db: DbSession, temp: Literal["ambient", "chi
         ORDER BY p.temp, p.name""", {"o": _outlet(user), "t": temp})
 
 
+@router.get("/usual")
+async def usual_order(user: StoreUser, db: DbSession, temp: Literal["ambient", "chilled"] = "ambient"):
+    """The outlet's usual quantities per product (pre-fills the order form)."""
+    return await rows(db, """
+        SELECT u.product_id, u.qty FROM outlet_usual_line u
+        WHERE u.outlet_id = :o AND u.temp = CAST(:t AS temp_class)""", {"o": _outlet(user), "t": temp})
+
+
 @router.get("/order-slot")
 async def order_slot(user: StoreUser, db: DbSession, temp: Literal["ambient", "chilled"] = "ambient"):
     """Next delivery date this outlet can still order for, its cutoff, and any order already placed."""
@@ -78,10 +86,27 @@ async def place_order(body: PlaceOrderIn, user: StoreUser, db: DbSession):
     return result
 
 
+class ChangeOrderIn(BaseModel):
+    lines: list[OrderLineIn] = Field(min_length=1)
+
+
+@router.put("/orders/{order_id}")
+async def change_order(order_id: int, body: ChangeOrderIn, user: StoreUser, db: DbSession):
+    """Change what is on an order until its cutoff (409 WP167 once the cutoff has passed)."""
+    if await one(db, "SELECT 1 AS x FROM order_header WHERE order_id = :id AND outlet_id = :o",
+                 {"id": order_id, "o": _outlet(user)}) is None:
+        raise not_found("Order")
+    await rows(db, "SELECT amend_order(:id, CAST(:lines AS jsonb), :u)",
+               {"id": order_id, "lines": [line.model_dump() for line in body.lines], "u": user.user_id})
+    await db.commit()
+    return await one(db, "SELECT order_id, confirmation_no, delivery_date FROM order_header WHERE order_id = :id",
+                     {"id": order_id})
+
+
 @router.get("/orders")
 async def my_orders(user: StoreUser, db: DbSession):
     return await rows(db, """
-        SELECT so.*, (SELECT jsonb_agg(jsonb_build_object('line_no', l.line_no, 'product', p.name, 'unit', p.unit, 'qty', l.qty)
+        SELECT so.*, (SELECT jsonb_agg(jsonb_build_object('line_no', l.line_no, 'product_id', l.product_id, 'product', p.name, 'unit', p.unit, 'qty', l.qty)
                                       ORDER BY l.line_no)
                       FROM order_line l JOIN product p USING (product_id) WHERE l.order_id = so.order_id) AS lines
         FROM store_orders so WHERE so.outlet_id = :o
@@ -95,8 +120,23 @@ async def order_detail(order_id: int, user: StoreUser, db: DbSession):
     if order is None:
         raise not_found("Order")
     order["lines"] = await rows(db, """
-        SELECT l.line_no, p.name AS product, p.unit, l.qty FROM order_line l JOIN product p USING (product_id)
+        SELECT l.line_no, l.product_id, p.name AS product, p.unit, l.qty FROM order_line l JOIN product p USING (product_id)
         WHERE l.order_id = :id ORDER BY l.line_no""", {"id": order_id})
+    order["cutoff_at"] = await scalar(db, """
+        SELECT r.cutoff_at FROM order_header h JOIN run r ON r.run_id = h.run_id WHERE h.order_id = :id""", {"id": order_id})
+    order["changeable"] = await scalar(db, """
+        SELECT h.status = 'placed' AND now() < r.cutoff_at FROM order_header h JOIN run r ON r.run_id = h.run_id
+        WHERE h.order_id = :id""", {"id": order_id})
+    order["delivery"] = await one(db, """
+        SELECT d.delivery_id, d.outcome, d.received_by, d.device_time AS delivered_at, u.name AS driver_name,
+               v.code AS vehicle_code, v.source_id AS vehicle_source_id
+        FROM current_delivery d JOIN app_user u ON u.user_id = d.driver_id
+        JOIN stop s ON s.stop_id = d.stop_id JOIN route r ON r.route_id = s.route_id JOIN vehicle v ON v.vehicle_id = r.vehicle_id
+        WHERE d.order_id = :id""", {"id": order_id})
+    order["issues"] = await rows(db, """
+        SELECT i.issue_id, i.reference_no, i.line_no, i.type, i.qty, i.note, p.name AS product
+        FROM receipt_issue i JOIN order_line l ON l.order_id = i.order_id AND l.line_no = i.line_no
+        JOIN product p ON p.product_id = l.product_id WHERE i.order_id = :id ORDER BY i.line_no""", {"id": order_id})
     order["receipt_lines"] = await rows(db, "SELECT * FROM receipt_comparison WHERE order_id = :id ORDER BY line_no",
                                         {"id": order_id})
     order["timeline"] = await rows(db, "SELECT * FROM order_timeline WHERE order_id = :id ORDER BY history_id",
@@ -113,6 +153,10 @@ async def confirm_receipt(order_id: int, body: ReceiptIn, user: StoreUser, db: D
     result = await one(db, "SELECT * FROM confirm_receipt(:id, :u, CAST(:issues AS jsonb))",
                        {"id": order_id, "u": user.user_id, "issues": [i.model_dump() for i in body.issues]})
     await db.commit()
+    # issue_id lets the screen attach a photo to each issue (POST /attachments with issue_id).
+    result["issues"] = await rows(db, """
+        SELECT issue_id, reference_no, line_no, type, qty FROM receipt_issue WHERE receipt_id = :r ORDER BY line_no""",
+        {"r": result["receipt_id"]})
     return result
 
 

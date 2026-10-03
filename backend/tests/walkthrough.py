@@ -81,7 +81,7 @@ with TestClient(app) as c:
     short_line = None
     for l in ll["lines"]:
         qty = float(l["ordered_qty"])
-        if l["outlet_name"].endswith("OUT079"):
+        if l["outlet_name"].endswith("OUT079") and short_line is None:
             qty -= 2; short_line = l
         lines.append({"confirmation_id": str(uuid.uuid4()), "order_id": l["order_id"], "line_no": l["line_no"], "qty_loaded": qty})
     events = [
@@ -114,7 +114,9 @@ with TestClient(app) as c:
     print("  driver sync:", [x["state"] for x in r1["results"]], "| resend:", [x["state"] for x in r2["results"]])
     att = ok(c.post("/api/v1/attachments", headers=DRV, files={"file": ("pod.jpg", b"\xff\xd8fakejpeg", "image/jpeg")},
                     data={"kind": "photo", "delivery_id": delivery_id}), 201)
-    print("  photo:", att["attachment_id"], "download:", c.get(f"/api/v1/attachments/{att['attachment_id']}", headers=SM).status_code)
+    link = ok(c.get(f"/api/v1/attachments/{att['attachment_id']}", headers=SM))["url"]
+    print("  photo:", att["attachment_id"], "signed link serves:", c.get(link).status_code,
+          "| tampered link:", c.get(link[:-4] + "0000").status_code)
 
     # Store manager confirms receipt with one damaged crate
     orders = ok(c.get("/api/v1/store/orders", headers=SM))
