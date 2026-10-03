@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BrandMonogram } from "@/components/waypoint/data";
+import { Logo } from "@/components/waypoint/logo";
 import { ScreenSwitcher } from "@/components/waypoint/screen-switcher";
 import { SyncIndicator } from "@/components/waypoint/status";
 import { ConfirmDelivery, type Receipt } from "./confirm-delivery";
@@ -21,13 +22,27 @@ export type StoreScreen = (typeof SCREENS)[number][0];
 export function StoreManagerApp() {
   const [screen, setScreen] = useState<StoreScreen>("deliveries");
   const [orderId, setOrderId] = useState<OrderId>("FP-4418");
+  /** Set when the order screen is changing an existing order rather than placing a new one. */
+  const [editing, setEditing] = useState<OrderId | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
 
-  const toDeliveries = () => setScreen("deliveries");
+  const toDeliveries = () => goTo("deliveries");
+
+  /** The Place order tab always means a new order, whatever was being changed before. */
+  function goTo(next: StoreScreen) {
+    if (next === "order") setEditing(null);
+    setScreen(next);
+  }
 
   function openOrder(id: OrderId) {
     setOrderId(id);
     setScreen("detail");
+  }
+
+  function changeOrder(id: OrderId) {
+    setOrderId(id);
+    setEditing(id);
+    setScreen("order");
   }
 
   return (
@@ -35,7 +50,7 @@ export function StoreManagerApp() {
       <div className="mx-auto flex w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas md:rounded-lg">
         <header className="flex min-h-14 flex-wrap items-center gap-x-4 border-b border-wp-border bg-wp-surface px-4 md:px-6">
           <div className="flex items-center gap-3 py-3 md:py-0">
-            <span className="text-[15px] font-bold">Waypoint</span>
+            <Logo className="h-6 md:h-7" />
             <span className="flex items-center gap-2 text-xs text-wp-text-2">
               <BrandMonogram brand="fresh" outlet="Pettah" />
             </span>
@@ -44,7 +59,7 @@ export function StoreManagerApp() {
           <ScreenSwitcher
             screens={SCREENS}
             current={screen}
-            onChange={setScreen}
+            onChange={goTo}
             variant="inline"
             className="order-last w-full self-stretch border-t border-wp-border md:order-none md:w-auto md:min-w-0 md:flex-1 md:border-t-0"
           />
@@ -60,11 +75,14 @@ export function StoreManagerApp() {
             <Deliveries
               receiptNote={receiptNote(receipt)}
               onOpenOrder={openOrder}
-              onNavigate={setScreen}
+              onChangeOrder={changeOrder}
+              onNavigate={goTo}
             />
           )}
-          {screen === "order" && <PlaceOrder onBack={toDeliveries} />}
-          {screen === "detail" && <OrderDetail orderId={orderId} onBack={toDeliveries} />}
+          {screen === "order" && <PlaceOrder key={editing ?? "new"} editing={editing} onBack={toDeliveries} />}
+          {screen === "detail" && (
+            <OrderDetail orderId={orderId} onChangeOrder={changeOrder} onBack={toDeliveries} />
+          )}
           {screen === "confirm" && (
             <ConfirmDelivery receipt={receipt} onConfirm={setReceipt} onBack={toDeliveries} />
           )}
@@ -80,5 +98,7 @@ function receiptNote(receipt: Receipt | null) {
   const count = receipt.issues.length;
   if (count === 0) return "Nothing reported.";
   const references = receipt.issues.map((issue) => issue.reference).join(", ");
-  return count === 1 ? `1 issue reported, reference ${references}.` : `${count} issues reported, references ${references}.`;
+  return count === 1
+    ? `1 issue reported, reference ${references}.`
+    : `${count} issues reported, references ${references}.`;
 }

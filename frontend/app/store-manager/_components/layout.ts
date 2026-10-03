@@ -12,5 +12,6 @@ export const storeLayout = {
   cols2: "grid-cols-1 md:grid-cols-2",
   colsMain: "grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]",
   colsReceipt: "grid-cols-2 md:grid-cols-4",
-  colsLine: "grid-cols-[1.4fr_.6fr_.8fr_1.2fr] md:grid-cols-[2fr_1fr_1fr_2fr]",
+  /** A delivered line: the counts sit two-up under the item name on a phone, in one row from md. */
+  colsLine: "grid-cols-2 md:grid-cols-[2fr_1fr_1fr_2fr]",
 };

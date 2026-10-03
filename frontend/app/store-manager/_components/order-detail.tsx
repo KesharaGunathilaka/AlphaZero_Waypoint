@@ -8,11 +8,20 @@ import { cn } from "@/lib/utils";
 import { ORDER_DETAILS, type OrderId } from "./data";
 import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
+import { ChangeOrderAction } from "./order-actions";
 
 const COLLAPSED_LINES = 4;
 
 /** S3 · Order detail: what the warehouse did with this order and where it is now. */
-export function OrderDetail({ orderId, onBack }: { orderId: OrderId; onBack: () => void }) {
+export function OrderDetail({
+  orderId,
+  onChangeOrder,
+  onBack,
+}: {
+  orderId: OrderId;
+  onChangeOrder: (id: OrderId) => void;
+  onBack: () => void;
+}) {
   const [showAll, setShowAll] = useState(false);
   const order = ORDER_DETAILS[orderId];
   const lines = showAll ? order.lines : order.lines.slice(0, COLLAPSED_LINES);
@@ -52,6 +61,14 @@ export function OrderDetail({ orderId, onBack }: { orderId: OrderId; onBack: () 
               </Button>
               <span className="text-xs text-wp-muted">For anything urgent</span>
             </div>
+          </section>
+
+          <section className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[15px] font-semibold">Change this order</h2>
+              <ChangeOrderAction orderId={order.id} onChangeOrder={onChangeOrder} />
+            </div>
+            <div className="text-[13px] leading-[18px] text-wp-text-2">{order.change.note}</div>
           </section>
 
           <section className={cn(storeLayout.card, "flex flex-col gap-1 p-4")}>
