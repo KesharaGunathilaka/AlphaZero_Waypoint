@@ -109,10 +109,10 @@ export function ChoiceTile({
   );
 }
 
-export function SyncPill({ offline }: { offline: boolean }) {
+export function SyncPill({ offline, pending = 3 }: { offline: boolean; pending?: number }) {
   return offline ? (
     <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold text-wp-offline">
-      ○ Offline · 3 to send
+      ○ Offline · {pending} to send
     </div>
   ) : (
     <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold text-wp-good">

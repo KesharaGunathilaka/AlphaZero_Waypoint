@@ -6,10 +6,20 @@ import { CURRENT_STOP, DISPATCHER, navigationUrl } from "./data";
 import type { DriverScreen } from "./driver-nav";
 import { BigButton, BigLink, Body, BottomBar, Card, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
 
-const UPCOMING = [
+type Stop = { glyph: string; stop: string; time: string; current?: boolean; moved?: boolean };
+
+/** The run as it left the depot. */
+const PLANNED: Stop[] = [
   { glyph: "●", stop: "5 Fresh Pettah", time: "07:12", current: true },
   { glyph: "○", stop: "6 Style Slave Island", time: "07:41" },
   { glyph: "○", stop: "7 Fresh Kollupitiya", time: "08:05" },
+];
+
+/** Dispatch's re-plan: Kollupitiya opens earlier, so stop 7 takes stop 6's slot. */
+const REPLANNED: Stop[] = [
+  { glyph: "●", stop: "5 Fresh Pettah", time: "07:12", current: true },
+  { glyph: "○", stop: "7 Fresh Kollupitiya", time: "07:41", moved: true },
+  { glyph: "○", stop: "6 Style Slave Island", time: "08:05" },
 ];
 
 function RunHeader({ offline }: { offline: boolean }) {
@@ -85,7 +95,7 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
             <span>✓ 4 stops done</span>
             <span className="text-[13px]">2 sent · 2 saved on phone</span>
           </div>
-          {UPCOMING.map((s) => (
+          {(noticeSeen ? REPLANNED : PLANNED).map((s) => (
             <div
               key={s.stop}
               className={cn(
@@ -93,8 +103,15 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
                 s.current && "bg-wp-info-tint font-bold",
               )}
             >
-              <span>
-                {s.glyph} {s.stop}
+              <span className="flex items-center gap-2">
+                <span>
+                  {s.glyph} {s.stop}
+                </span>
+                {s.moved && (
+                  <span className="rounded bg-wp-info-tint px-1.5 py-0.5 text-[11px] font-semibold text-wp-info">
+                    moved up
+                  </span>
+                )}
               </span>
               <span className={cn("text-[13px]", !s.current && "text-wp-text-2")}>{s.time}</span>
             </div>

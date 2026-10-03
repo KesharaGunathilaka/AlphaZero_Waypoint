@@ -11,6 +11,7 @@ import { DISPATCHER } from "./data";
 const SCREENS = [
   ["run", "My run", "●", "R1"],
   ["moving", "Driving", "➤", "R1"],
+  ["complete", "Route complete", "◆", "R1"],
   ["stop", "Stop details", "▣", "R2"],
   ["deliver", "Record delivery", "✓", "R3"],
   ["problem", "Report a problem", "⚑", "R4"],

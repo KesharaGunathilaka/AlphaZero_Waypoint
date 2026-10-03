@@ -3,24 +3,36 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Finger-drawn proof of delivery. The strokes stay on the canvas; the screen only
- * needs to know whether anything was signed, so that is all this reports upwards.
+ * Finger-drawn proof of delivery.
+ *
+ * The strokes are handed up as a data URL at the end of each one, so a signature
+ * survives the screen being left and come back to — the canvas itself does not.
  */
-export function SignaturePad({ signed, onSignedChange }: { signed: boolean; onSignedChange: (signed: boolean) => void }) {
+export function SignaturePad({ value, onChange }: { value: string | null; onChange: (value: string | null) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
+  /** The signature this pad opened with, redrawn once the canvas is sized. */
+  const initial = useRef(value);
+  const [inked, setInked] = useState(value !== null);
   const [ink, setInk] = useState("#121c2b");
 
   // Match the backing store to the laid-out box so strokes land under the finger.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
     const { width, height } = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
-    canvas.getContext("2d")?.scale(dpr, dpr);
+    ctx.scale(dpr, dpr);
     setInk(getComputedStyle(canvas).color);
+
+    if (initial.current) {
+      const image = new window.Image();
+      image.onload = () => ctx.drawImage(image, 0, 0, width, height);
+      image.src = initial.current;
+    }
   }, []);
 
   function point(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -49,7 +61,13 @@ export function SignaturePad({ signed, onSignedChange }: { signed: boolean; onSi
     ctx.lineJoin = "round";
     ctx.lineTo(x, y);
     ctx.stroke();
-    if (!signed) onSignedChange(true);
+    setInked(true);
+  }
+
+  function end(e: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawing.current) return;
+    drawing.current = false;
+    onChange(e.currentTarget.toDataURL());
   }
 
   function clear() {
@@ -57,7 +75,8 @@ export function SignaturePad({ signed, onSignedChange }: { signed: boolean; onSi
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    onSignedChange(false);
+    setInked(false);
+    onChange(null);
   }
 
   return (
@@ -68,24 +87,25 @@ export function SignaturePad({ signed, onSignedChange }: { signed: boolean; onSi
           aria-label="Signature"
           onPointerDown={start}
           onPointerMove={move}
-          onPointerUp={() => (drawing.current = false)}
-          onPointerLeave={() => (drawing.current = false)}
+          onPointerUp={end}
+          onPointerLeave={end}
           className="h-[88px] w-full touch-none rounded-[10px] border border-dashed border-wp-muted bg-wp-canvas text-wp-text"
         />
-        {!signed && (
+        {!inked && (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-wp-muted">
             Sign here
           </span>
         )}
       </div>
-      <button
-        type="button"
-        onClick={clear}
-        disabled={!signed}
-        className="flex h-11 cursor-pointer items-center justify-center rounded-[10px] border border-wp-border font-semibold disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        Clear signature
-      </button>
+      {inked && (
+        <button
+          type="button"
+          onClick={clear}
+          className="flex h-11 cursor-pointer items-center justify-center rounded-[10px] border border-wp-border font-semibold"
+        >
+          Clear signature
+        </button>
+      )}
     </div>
   );
 }
