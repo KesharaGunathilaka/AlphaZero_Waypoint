@@ -5,3 +5,5 @@ build
 .git
 README.md
 .gitignore
+.env*
+!.env.example

@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     CLERK_JWKS_URL: str = ""  # e.g. https://<your-domain>.clerk.accounts.dev/.well-known/jwks.json
     CLERK_ISSUER: str = ""
     CLERK_AUDIENCE: str | None = None  # read by app/auth/auth.py; None = do not check "aud"
+    # Used once per new sign-in to read the user's email and link them to their wp.app_user row.
+    CLERK_SECRET_KEY: SecretStr = SecretStr("")
+    # Development only: accept "X-Dev-User: <email>" instead of a Clerk token (tests, curl).
+    AUTH_DEV_BYPASS: bool = False
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
     CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 
@@ -81,6 +85,8 @@ class Settings(BaseSettings):
                 raise ValueError("CORS_ORIGINS must be explicit in production")
             if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:
                 raise ValueError("ALLOWED_HOSTS must be explicit in production")
+            if self.AUTH_DEV_BYPASS:
+                raise ValueError("AUTH_DEV_BYPASS must be off in production")
         return self
 
 

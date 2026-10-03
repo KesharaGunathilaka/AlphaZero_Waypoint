@@ -7,7 +7,8 @@ PostgreSQL **18** everywhere (Neon runs 18; Docker uses `postgres:18-alpine`). A
 | `db/waypoint_schema.sql` | Creates schema `wp`: tables, relationships, the booklet's rules (triggers + `plan_violations()`), workflow functions, views, roles, and fixed reference rows not in the CSVs (brands, depots, vehicle classes, proof rule, reason codes). Run **once** on an empty database. |
 | `db/waypoint_import.sql` | Loads the 7 CSVs in `data/general/`. Safe to run again (updates rows in place). |
 | `db/init/10-load-waypoint.sh` | Runs both automatically inside the Docker `db` container on its first start. |
-| `db/load.sh` | Runs both against any database URL (Neon). |
+| `db/migrations/*.sql` | Changes after the base schema (001: driver per vehicle, photo storage, `demo_reset()`). Safe to re-run. |
+| `db/load.sh` | Runs all of it against any database URL (Neon). |
 
 ## Local: Docker
 
@@ -28,9 +29,11 @@ Needs `psql` 16+. Use the **direct** connection string for loading (Neon → Con
 #   NEON_DATABASE_URL='postgresql://USER:PASSWORD@ep-xxxx.REGION.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 set -a; . ./.env.neon; set +a
 
-./db/load.sh "$NEON_DATABASE_URL"            # empty database: schema + data
+./db/load.sh "$NEON_DATABASE_URL"            # empty database: schema + CSVs + migrations + demo day
+./db/load.sh "$NEON_DATABASE_URL" --migrate  # existing database: apply db/migrations/*.sql (safe to re-run)
+./db/load.sh "$NEON_DATABASE_URL" --demo     # wipe orders/plans/deliveries, seed a fresh demo day
 ./db/load.sh "$NEON_DATABASE_URL" --data     # reload the CSVs only
-./db/load.sh "$NEON_DATABASE_URL" --reset    # drop schema wp (ALL app data) and rebuild
+./db/load.sh "$NEON_DATABASE_URL" --reset    # drop schema wp (ALL app data) and rebuild everything
 ```
 
 The deployed API uses the **pooled** string (host contains `-pooler`) as `DATABASE_URL`.
