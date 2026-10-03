@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { OrganizationList } from "@clerk/nextjs";
+import { Logo } from "@/components/waypoint/logo";
 
 export const metadata: Metadata = {
   title: "Choose depot · Waypoint",
@@ -20,7 +21,9 @@ export default async function SelectOrgPage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-wp-canvas p-6 text-wp-text">
-      <h1 className="text-[22px] font-bold">Waypoint</h1>
+      <h1>
+        <Logo className="h-12" />
+      </h1>
       <p className="text-[13px] text-wp-text-2">Choose your depot to continue.</p>
       <OrganizationList hidePersonal afterSelectOrganizationUrl="/" afterCreateOrganizationUrl="/" />
     </main>

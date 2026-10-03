@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BrandMonogram } from "@/components/waypoint/data";
+import { Logo } from "@/components/waypoint/logo";
 import { ScreenSwitcher } from "@/components/waypoint/screen-switcher";
 import { SyncIndicator } from "@/components/waypoint/status";
 import { ConfirmDelivery, type Receipt } from "./confirm-delivery";
@@ -34,7 +35,7 @@ export function StoreManagerApp() {
 
       <div className="relative flex w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas md:rounded-lg">
         <header className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-1 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6 md:py-0">
-          <div className="text-[15px] font-bold">Waypoint</div>
+          <Logo />
           <div className="flex items-center gap-2 text-xs text-wp-text-2">
             <BrandMonogram brand="fresh" outlet="Pettah" />
           </div>

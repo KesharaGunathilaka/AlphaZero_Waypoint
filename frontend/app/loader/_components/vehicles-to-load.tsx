@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Logo } from "@/components/waypoint/logo";
 import { cn } from "@/lib/utils";
 import { VEHICLES, type LoadingVehicle } from "./data";
 import { CARD, LiveStatus, TabletPill, TabletScreen } from "./tablet-ui";
@@ -24,8 +25,8 @@ export function VehiclesToLoad({ onOpenVehicle }: { onOpenVehicle: (id: string) 
   return (
     <TabletScreen label="L1 Vehicles to load">
       <header className="flex h-[72px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
-        <div className="flex items-baseline gap-4">
-          <span className="text-xl font-bold">Waypoint</span>
+        <div className="flex items-center gap-4">
+          <Logo variant="light" className="h-9" />
           <span className="text-wp-text-2">Dock 2 · Wed 30 Sep</span>
         </div>
         <LiveStatus />

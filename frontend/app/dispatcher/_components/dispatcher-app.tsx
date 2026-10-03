@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Logo } from "@/components/waypoint/logo";
 import { cn } from "@/lib/utils";
 import { DEFERRABLE_ORDER_IDS } from "./data";
 import { Deferrals, INITIAL_DEFERRAL_STATE, type DeferralState } from "./deferrals";
@@ -25,7 +26,7 @@ export function DispatcherApp() {
   return (
     <div className="min-h-screen bg-wp-canvas text-[13px] leading-[18px] text-wp-text tabular-nums">
       <header className="flex h-12 items-center gap-6 border-b border-wp-border bg-wp-surface px-6">
-        <div className="text-[15px] font-bold">Waypoint</div>
+        <Logo />
         <nav className="flex h-full gap-1">
           {TABS.map(([key, label]) => (
             <button
