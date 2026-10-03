@@ -117,7 +117,16 @@ async def plan_view(plan_id: int, user: Dispatcher, db: DbSession):
         "plan": plan,
         "summary": await one(db, "SELECT * FROM plan_summary WHERE plan_id = :p", {"p": plan_id}),
         "routes": routes,
-        "unplanned": await rows(db, "SELECT * FROM overflow_candidates WHERE plan_id = :p ORDER BY fcfs_rank", {"p": plan_id}),
+        "unplanned": await rows(db, """
+            SELECT oc.*, ou.code AS outlet_code, ou.van_only, ou.unload, d.name AS district,
+                   rc.label AS suggested_label, h.delivery_date
+            FROM overflow_candidates oc JOIN outlet ou ON ou.outlet_id = oc.outlet_id
+            JOIN district d ON d.district_id = ou.district_id JOIN order_header h ON h.order_id = oc.order_id
+            LEFT JOIN reason_code rc ON rc.scope = 'deferral' AND rc.code = oc.suggested_reason
+            WHERE oc.plan_id = :p ORDER BY oc.fcfs_rank""", {"p": plan_id}),
+        "next_operating_day": await scalar(db, """
+            SELECT d FROM generate_series(CAST(:day AS date) + 1, CAST(:day AS date) + 14, interval '1 day') g(d)
+            WHERE is_working_day(d::date) ORDER BY d LIMIT 1""", {"day": plan["service_date"]}),
         "violations": await rows(db, "SELECT * FROM plan_violations(:p)", {"p": plan_id}),
         "vehicles": await rows(db, """
             SELECT v.vehicle_id, v.code, v.source_id, c.name AS class, c.is_van, c.carries_chilled, v.active,
@@ -239,6 +248,21 @@ async def monitor(user: Dispatcher, db: DbSession):
                                "ORDER BY service_date DESC LIMIT 3"),
         "fleet": await rows(db, "SELECT * FROM fleet_status ORDER BY vehicle_code, route_seq"),
         "exceptions": await rows(db, "SELECT * FROM monitor_exceptions ORDER BY urgency, since"),
+        # Stop by stop for every live trip: plan against what the phones have reported.
+        "stops": await rows(db, """
+            SELECT s.route_id, s.stop_id, s.seq, ou.code AS outlet_code, ou.name AS outlet_name, s.planned_arrival,
+                   a.device_time AS arrived_at,
+                   (SELECT min(d.device_time) FROM stop_order so JOIN current_delivery d ON d.order_id = so.order_id
+                     WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS delivered_at,
+                   (SELECT string_agg(DISTINCT d.outcome::text, ',') FROM stop_order so JOIN current_delivery d ON d.order_id = so.order_id
+                     WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS outcomes,
+                   (SELECT count(*) FROM stop_order so JOIN current_delivery d ON d.order_id = so.order_id
+                     JOIN attachment at ON at.delivery_id = d.delivery_id
+                     WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS proof_files
+            FROM stop s JOIN outlet ou ON ou.outlet_id = s.outlet_id
+            LEFT JOIN stop_arrival a ON a.stop_id = s.stop_id
+            WHERE s.removed_at IS NULL AND s.route_id IN (SELECT route_id FROM fleet_status)
+            ORDER BY s.route_id, s.seq"""),
         "server_time": await scalar(db, "SELECT now()"),
     }
 
@@ -258,10 +282,32 @@ async def reply_to_flag(flag_id: UUID, body: ReplyIn, user: Dispatcher, db: DbSe
     return {"instruction_id": instruction}
 
 
+@router.get("/orders/{order_id}")
+async def order_record(order_id: int, user: Dispatcher, db: DbSession):
+    """One order's full record: status trail, deferrals, delivery proof and the outlet's last runs."""
+    order = await one(db, "SELECT * FROM order_board WHERE order_id = :o", {"o": order_id})
+    if order is None:
+        raise not_found("Order")
+    order["timeline"] = await rows(db, "SELECT * FROM order_timeline WHERE order_id = :o ORDER BY history_id", {"o": order_id})
+    order["deferrals"] = await rows(db, """
+        SELECT d.from_date, d.to_date, rc.label AS reason, d.note, d.consecutive_skip, u.name AS decided_by, d.decided_at
+        FROM deferral d JOIN reason_code rc ON rc.scope = d.scope AND rc.code = d.reason_code
+        JOIN app_user u ON u.user_id = d.decided_by WHERE d.order_id = :o ORDER BY d.decided_at""", {"o": order_id})
+    order["notices"] = await rows(db, "SELECT kind, title, created_at, read_at FROM notice WHERE order_id = :o ORDER BY created_at",
+                                  {"o": order_id})
+    order["proof"] = await rows(db, """
+        SELECT a.attachment_id, a.kind, a.device_time FROM attachment a JOIN current_delivery d ON d.delivery_id = a.delivery_id
+        WHERE d.order_id = :o ORDER BY a.device_time""", {"o": order_id})
+    order["history"] = await rows(db, "SELECT day, outcome FROM outlet_run_history WHERE outlet_id = :ou ORDER BY day",
+                                  {"ou": order["outlet_id"]})
+    return order
+
+
 @router.get("/ledger")
 async def ledger(user: Dispatcher, db: DbSession):
     """Every deferral and delivery: the record of who was skipped, why, and what arrived."""
     return {
         "headline": await one(db, "SELECT * FROM ledger_headline"),
         "records": await rows(db, "SELECT * FROM ledger ORDER BY at DESC LIMIT 200"),
+        "per_day": await rows(db, "SELECT day, is_working, deferred FROM deferrals_per_day ORDER BY day"),
     }

@@ -35,16 +35,48 @@ END $$;
 -- OUT077's dry order is left for the judge to place as the store manager.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql AS $$
-DECLARE d date; dispatcher integer; o record; prod integer; n integer := 0; kg numeric; m3 numeric; per numeric;
+DECLARE d date; dispatcher integer; o record; n integer := 0; kg numeric; m3 numeric; lines jsonb; base numeric;
 BEGIN
-  -- Products (a small catalogue per brand; the booklet gives order totals only).
-  INSERT INTO wp.product(brand_id, sku, name, temp, unit, unit_weight_kg, unit_volume_m3, fragile, hanging, high_value) VALUES
-    (1, 'F-DRY-01', 'Dry groceries crate',    'ambient', 'crate',  10, 0.057, false, false, false),
-    (1, 'F-CHL-01', 'Dairy crate (chilled)',  'chilled', 'crate',  12.5, 0.075, false, false, false),
-    (2, 'S-CTN-01', 'Garment carton',         'ambient', 'carton', 10, 0.100, false, false, false),
-    (2, 'S-HNG-01', 'Hanging garment rail',   'ambient', 'rail',   15, 0.300, false, true,  false),
-    (3, 'T-APP-01', 'Appliance box',          'ambient', 'box',    35, 0.200, true,  false, true)
-  ON CONFLICT (sku) DO NOTHING;
+  -- Wipe operational data first. TRUNCATE does not fire the append-only row triggers.
+  TRUNCATE wp.attachment_blob, wp.attachment, wp.receipt_issue, wp.store_receipt, wp.delivery_line, wp.delivery,
+           wp.stop_arrival, wp.load_confirmation, wp.route_release, wp.instruction, wp.flag, wp.plan_change_ack,
+           wp.plan_change, wp.plan_conflict, wp.device_event, wp.notice, wp.deferral, wp.deferral_draft,
+           wp.stop_order, wp.stop, wp.route, wp.plan_version, wp.plan, wp.order_status_history, wp.order_line,
+           wp.order_draft, wp.outlet_usual_line, wp.order_header, wp.run, wp.prediction, wp.audit_log
+           RESTART IDENTITY CASCADE;
+  UPDATE wp.device SET last_seen_at = NULL, last_sync_at = NULL;
+
+  -- Product catalogue (the booklet gives order totals only). Item names follow the Day 5 screens;
+  -- "usual" is the quantity a typical order holds, used to build the demo order lines.
+  CREATE TEMP TABLE IF NOT EXISTS demo_catalogue (brand_id smallint, sku text, name text, temp wp.temp_class, unit text,
+    unit_kg numeric, unit_m3 numeric, fragile boolean, hanging boolean, high_value boolean, usual integer) ON COMMIT DROP;
+  TRUNCATE demo_catalogue;
+  INSERT INTO demo_catalogue VALUES
+    (1, 'F-RICE5',  'Rice, 5 kg bag',          'ambient', 'bag',    5.1,  0.030, false, false, false, 12),
+    (1, 'F-SUGAR',  'Sugar, 1 kg',             'ambient', 'pack',   1.0,  0.006, false, false, false, 20),
+    (1, 'F-DHAL',   'Dhal, 1 kg',              'ambient', 'pack',   1.0,  0.006, false, false, false, 15),
+    (1, 'F-COCOIL', 'Coconut oil, 1 L',        'ambient', 'bottle', 0.95, 0.006, false, false, false, 10),
+    (1, 'F-TEA',    'Tea, 400 g',              'ambient', 'pack',   0.4,  0.004, false, false, false, 18),
+    (1, 'F-FLOUR',  'Wheat flour, 1 kg',       'ambient', 'pack',   1.0,  0.006, false, false, false, 14),
+    (1, 'F-SALT',   'Salt, 500 g',             'ambient', 'pack',   0.5,  0.003, false, false, false, 8),
+    (1, 'F-CHICK',  'Chilled chicken, 1 kg',   'chilled', 'pack',   1.0,  0.008, false, false, false, 24),
+    (1, 'F-MILK',   'Full-cream milk, 1 L',    'chilled', 'carton', 1.05, 0.004, false, false, false, 48),
+    (1, 'F-CURD',   'Curd, 400 g',             'chilled', 'pot',    0.45, 0.003, false, false, false, 30),
+    (1, 'F-EGGS',   'Eggs, tray of 30',        'chilled', 'tray',   1.9,  0.012, true,  false, false, 12),
+    (1, 'F-BUTTER', 'Butter, 200 g',           'chilled', 'pack',   0.22, 0.002, false, false, false, 16),
+    (1, 'F-CHEESE', 'Cheese slices, 200 g',    'chilled', 'pack',   0.22, 0.002, false, false, false, 10),
+    (2, 'S-SHIRT',  'Shirts, carton of 12',    'ambient', 'carton', 6,    0.060, false, false, false, 10),
+    (2, 'S-DENIM',  'Denim, carton of 10',     'ambient', 'carton', 9,    0.050, false, false, false, 8),
+    (2, 'S-DRESS',  'Dresses, rail of 20',     'ambient', 'rail',   12,   0.250, false, true,  false, 6),
+    (3, 'T-TV55',   'Television, 55 inch',     'ambient', 'box',    22,   0.250, true,  false, true,  2),
+    (3, 'T-FRIDGE', 'Refrigerator, 350 L',     'ambient', 'box',    65,   0.800, true,  false, true,  1),
+    (3, 'T-WASHER', 'Washing machine, 8 kg',   'ambient', 'box',    70,   0.600, true,  false, true,  1),
+    (3, 'T-SMALL',  'Small appliances carton', 'ambient', 'carton', 8,    0.050, false, false, false, 6);
+  DELETE FROM wp.product WHERE sku NOT IN (SELECT sku FROM demo_catalogue);
+  INSERT INTO wp.product(brand_id, sku, name, temp, unit, unit_weight_kg, unit_volume_m3, fragile, hanging, high_value)
+  SELECT brand_id, sku, name, temp, unit, unit_kg, unit_m3, fragile, hanging, high_value FROM demo_catalogue
+  ON CONFLICT (sku) DO UPDATE SET name = EXCLUDED.name, temp = EXCLUDED.temp, unit = EXCLUDED.unit,
+    unit_weight_kg = EXCLUDED.unit_weight_kg, unit_volume_m3 = EXCLUDED.unit_volume_m3, active = true;
 
   -- Accounts. Emails are the sign-in names (Clerk links them by email on first sign-in).
   INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id)
@@ -67,15 +99,6 @@ BEGIN
 
   -- Day 5 assumption: VEH058 (refrigerated van, Kandy) is in the workshop; all others available.
   UPDATE wp.vehicle SET active = (source_id <> 'VEH058');
-
-  -- Wipe operational data. TRUNCATE does not fire the append-only row triggers.
-  TRUNCATE wp.attachment_blob, wp.attachment, wp.receipt_issue, wp.store_receipt, wp.delivery_line, wp.delivery,
-           wp.stop_arrival, wp.load_confirmation, wp.route_release, wp.instruction, wp.flag, wp.plan_change_ack,
-           wp.plan_change, wp.plan_conflict, wp.device_event, wp.notice, wp.deferral, wp.deferral_draft,
-           wp.stop_order, wp.stop, wp.route, wp.plan_version, wp.plan, wp.order_status_history, wp.order_line,
-           wp.order_draft, wp.outlet_usual_line, wp.order_header, wp.run, wp.prediction, wp.audit_log
-           RESTART IDENTITY CASCADE;
-  UPDATE wp.device SET last_seen_at = NULL, last_sync_at = NULL;
 
   d := wp.next_open_service_date((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'));
   SELECT user_id INTO dispatcher FROM wp.app_user WHERE email = 'dispatcher@waypoint.demo';
@@ -104,16 +127,28 @@ BEGIN
     WHERE ou.depot_id = (SELECT depot_id FROM wp.depot WHERE name = 'Kandy') AND ou.code NOT BETWEEN 'OUT076' AND 'OUT083'
       AND ou.code NOT IN ('OUT088', 'OUT093') AND (b.code = 'F' OR abs(hashtext(ou.code)) % 3 <> 0)
   LOOP
-    SELECT product_id, unit_weight_kg INTO prod, per FROM wp.product p
-    WHERE p.brand_id = (SELECT brand_id FROM wp.brand WHERE code = o.brand) AND p.temp = o.temp ORDER BY sku LIMIT 1;
     kg := o.kg;
     -- density: Fresh ~170 kg/m3, Style garments ~100 kg/m3 (volume fills first), Tech ~175 kg/m3
     m3 := COALESCE(o.m3, round(kg / CASE o.brand WHEN 'S' THEN 100 WHEN 'T' THEN 175 ELSE 170 END, 2));
-    PERFORM wp.place_order(gen_random_uuid(), o.outlet_id, o.temp,
-              jsonb_build_array(jsonb_build_object('product_id', prod, 'qty', GREATEST(1, round(kg / per)))),
-              dispatcher, 'dispatcher', d, kg, m3);
+    -- Lines: the usual mix of this brand and temperature, scaled to the order's weight.
+    SELECT sum(c.usual * c.unit_kg) INTO base FROM demo_catalogue c
+    WHERE c.brand_id = (SELECT brand_id FROM wp.brand WHERE code = o.brand) AND c.temp = o.temp;
+    SELECT jsonb_agg(jsonb_build_object('product_id', p.product_id, 'qty', GREATEST(1, round(c.usual * kg / base)))
+                     ORDER BY c.sku)
+      INTO lines
+    FROM demo_catalogue c JOIN wp.product p ON p.sku = c.sku
+    WHERE c.brand_id = (SELECT brand_id FROM wp.brand WHERE code = o.brand) AND c.temp = o.temp;
+    PERFORM wp.place_order(gen_random_uuid(), o.outlet_id, o.temp, lines, dispatcher, 'dispatcher', d, kg, m3);
     n := n + 1;
   END LOOP;
+
+  -- A usual order for every Kandy outlet that has none yet (pre-fills the store manager's order form).
+  INSERT INTO wp.outlet_usual_line(outlet_id, temp, product_id, qty)
+  SELECT ou.outlet_id, c.temp, p.product_id, c.usual
+  FROM wp.outlet ou JOIN demo_catalogue c ON c.brand_id = ou.brand_id JOIN wp.product p ON p.sku = c.sku
+  WHERE ou.depot_id = (SELECT depot_id FROM wp.depot WHERE name = 'Kandy')
+    AND NOT EXISTS (SELECT 1 FROM wp.outlet_usual_line u WHERE u.outlet_id = ou.outlet_id AND u.temp = c.temp)
+  ON CONFLICT DO NOTHING;
 
   RETURN jsonb_build_object('service_date', d, 'orders', n,
                             'cutoff', wp.run_cutoff((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'), d));

@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     CLERK_SECRET_KEY: SecretStr = SecretStr("")
     # Development only: accept "X-Dev-User: <email>" instead of a Clerk token (tests, curl).
     AUTH_DEV_BYPASS: bool = False
+
+    # Photos and signatures. "db" keeps them in Postgres (Docker delivery: no cloud account needed);
+    # "s3" uses an S3-compatible bucket (deployed: Neon object storage, credentials in .env.aws).
+    STORAGE_BACKEND: Literal["db", "s3"] = "db"
+    S3_BUCKET: str = "images"
+    AWS_ENDPOINT_URL_S3: str = ""
+    AWS_REGION: str = "ap-southeast-1"
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: SecretStr = SecretStr("")
+    # Signs the short-lived image links of the "db" backend. Empty = a random key per process.
+    URL_SIGNING_SECRET: SecretStr = SecretStr("")
+    PUBLIC_API_URL: str = "http://localhost:8000"  # how browsers reach this API (image links)
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
     CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 
