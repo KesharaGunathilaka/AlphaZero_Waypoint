@@ -46,6 +46,32 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Waypoint design system (see the --wp-* tokens below) */
+  --color-wp-canvas: var(--wp-canvas);
+  --color-wp-surface: var(--wp-surface);
+  --color-wp-surface-2: var(--wp-surface-2);
+  --color-wp-border: var(--wp-border);
+  --color-wp-text: var(--wp-text);
+  --color-wp-text-2: var(--wp-text-2);
+  --color-wp-muted: var(--wp-muted);
+  --color-wp-action: var(--wp-action);
+  --color-wp-on-action: var(--wp-on-action);
+  --color-wp-focus: var(--wp-focus);
+  --color-wp-good: var(--wp-good);
+  --color-wp-good-tint: var(--wp-good-tint);
+  --color-wp-warn: var(--wp-warn);
+  --color-wp-warn-tint: var(--wp-warn-tint);
+  --color-wp-crit: var(--wp-crit);
+  --color-wp-crit-tint: var(--wp-crit-tint);
+  --color-wp-info: var(--wp-info);
+  --color-wp-info-tint: var(--wp-info-tint);
+  --color-wp-offline: var(--wp-offline);
+  --color-wp-offline-tint: var(--wp-offline-tint);
+  --color-wp-brand-fresh: var(--wp-brand-fresh);
+  --color-wp-brand-style: var(--wp-brand-style);
+  --color-wp-brand-tech: var(--wp-brand-tech);
+  --color-wp-gauge-amber: var(--wp-gauge-amber);
 }
 
 :root {
@@ -81,6 +107,58 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  --wp-canvas: #f3f5f8;
+  --wp-surface: #ffffff;
+  --wp-surface-2: #e9edf3;
+  --wp-border: #c9d1dc;
+  --wp-text: #121c2b;
+  --wp-text-2: #40506a;
+  --wp-muted: #5a6a82;
+  --wp-action: #17375e;
+  --wp-on-action: #ffffff;
+  --wp-focus: #1b5fc2;
+  --wp-good: #0b6b2e;
+  --wp-good-tint: #e2f3e8;
+  --wp-warn: #804a00;
+  --wp-warn-tint: #ffefcc;
+  --wp-crit: #b3261e;
+  --wp-crit-tint: #fce4e2;
+  --wp-info: #1d559b;
+  --wp-info-tint: #e3edfb;
+  --wp-offline: #4a5568;
+  --wp-offline-tint: #e6e9ee;
+  --wp-brand-fresh: #2a78d6;
+  --wp-brand-style: #b03a78;
+  --wp-brand-tech: #4a3aa7;
+  --wp-gauge-amber: #f5b942;
+}
+
+/* Waypoint dark theme, used by the loader's dock tablet. */
+[data-theme="dark"] {
+  --wp-canvas: #0c131d;
+  --wp-surface: #152030;
+  --wp-surface-2: #1e2c40;
+  --wp-border: #34445e;
+  --wp-text: #f1f5f9;
+  --wp-text-2: #bac6d6;
+  --wp-muted: #97a5ba;
+  --wp-action: #9cc3f5;
+  --wp-on-action: #0c131d;
+  --wp-focus: #8db8f2;
+  --wp-good: #6fd69a;
+  --wp-good-tint: #12351f;
+  --wp-warn: #f5b942;
+  --wp-warn-tint: #3a2a08;
+  --wp-crit: #ff9a92;
+  --wp-crit-tint: #431a18;
+  --wp-info: #8db8f2;
+  --wp-info-tint: #172c4a;
+  --wp-offline: #b5c0cf;
+  --wp-offline-tint: #263246;
+  --wp-brand-fresh: #64748b;
+  --wp-brand-style: #64748b;
+  --wp-brand-tech: #64748b;
 }
 
 .dark {

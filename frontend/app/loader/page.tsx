@@ -1,6 +1,10 @@
+import type { Metadata } from "next";
+import { LoaderApp } from "./_components/loader-app";
 
-export default function Loaderpage() {
-  return (
-    <div>Loaderpage</div>
-  )
+export const metadata: Metadata = {
+  title: "Loader · Waypoint",
+};
+
+export default function LoaderPage() {
+  return <LoaderApp />;
 }
