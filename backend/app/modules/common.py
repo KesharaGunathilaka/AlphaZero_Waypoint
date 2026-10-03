@@ -17,10 +17,24 @@ logger = logging.getLogger(__name__)
 _WP_ERROR = re.compile(r"(WP\d{3}): ([^\n]*)")
 
 
+# Table constraints from db/waypoint_schema.sql that a user action can hit, in the dispatcher's words.
+_CONSTRAINTS = [
+    ("route_plan_id_vehicle_id_tstzrange_excl", "The vehicle's two trips would overlap in time."),
+    ("route_plan_id_vehicle_id_seq_key", "That vehicle already has a trip with this number."),
+    ("route_seq_check", "A vehicle runs at most two trips a day."),
+    ("route_check", "A trip must return after it departs."),
+    ("order_one_regular", "This outlet already has an order of this kind for that day."),
+]
+
+
 def _http_error(exc: DBAPIError) -> HTTPException:
     message = str(exc.orig) if exc.orig is not None else str(exc)
     match = _WP_ERROR.search(message)
     if match is None:
+        # Constraints are rules too: say which one in words instead of a bare 500.
+        for needle, text_ in _CONSTRAINTS:
+            if needle in message:
+                return HTTPException(status.HTTP_409_CONFLICT, {"code": "constraint", "message": text_})
         logger.error("Database error: %s", message)
         return HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Database error")
     code, text_ = match.groups()
