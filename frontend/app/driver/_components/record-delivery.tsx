@@ -10,8 +10,8 @@ import { SignaturePad } from "./signature-pad";
 import { useRun, type RunStop } from "./use-run";
 
 const OUTCOMES = [
-  { key: "delivered", icon: "✓", label: "In full" },
-  { key: "delivered_in_part", icon: "▲", label: "In part" },
+  { key: "delivered", icon: "✓", label: "All delivered" },
+  { key: "delivered_in_part", icon: "▲", label: "Some missing" },
   { key: "not_delivered", icon: "✕", label: "Not delivered" },
 ] as const;
 
@@ -122,8 +122,8 @@ function DeliveryForm({
   const delivered = outcome !== "not_delivered";
   const shortLines = lines.filter((l) => qty[l.line_no] < loadedOf(l.line_no));
   const problems = [
-    delivered && !receivedBy.trim() && "Enter who received the goods.",
-    outcome === "delivered_in_part" && shortLines.length === 0 && "Lower at least one quantity for a part delivery, or choose In full.",
+    delivered && !receivedBy.trim() && "Type the name of the person who took the goods.",
+    outcome === "delivered_in_part" && shortLines.length === 0 && "Lower the number of the missing items, or choose All delivered.",
     outcome === "delivered_in_part" && shortLines.some((l) => !shortReason[l.line_no]) && "Pick a reason for each short line.",
     outcome === "delivered_in_part" && shortLines.some((l) => shortReason[l.line_no] === "other") && !note.trim() && "Add a note for “Other”.",
     outcome === "not_delivered" && reason === "other" && !note.trim() && "Add a note for “Other”.",
@@ -197,7 +197,7 @@ function DeliveryForm({
         {delivered ? (
           <>
             <Card>
-              <SectionLabel>{outcome === "delivered" ? "DELIVERING" : "QUANTITIES HANDED OVER"}</SectionLabel>
+              <SectionLabel>{outcome === "delivered" ? "HANDING OVER" : "HOW MANY DID THEY GET? TAP − FOR MISSING ITEMS"}</SectionLabel>
               {lines.map((l) => {
                 const loaded = loadedOf(l.line_no);
                 const short = outcome === "delivered_in_part" && qty[l.line_no] < loaded;
@@ -236,9 +236,9 @@ function DeliveryForm({
             </Card>
 
             <Card>
-              <SectionLabel>PROOF · NAME, SIGNATURE, PHOTO</SectionLabel>
+              <SectionLabel>WHO TOOK IT · SIGNATURE · PHOTO</SectionLabel>
               <div className={cn(fieldClass, "flex items-center gap-2")}>
-                <span className="flex-shrink-0 text-wp-text-2">Received by:</span>
+                <span className="flex-shrink-0 text-wp-text-2">Taken by:</span>
                 <input aria-label="Received by" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)}
                        placeholder="Name" className="min-w-0 flex-1 bg-transparent text-base text-wp-text outline-none" />
               </div>
@@ -249,7 +249,7 @@ function DeliveryForm({
         ) : (
           <>
             <Card>
-              <SectionLabel>REASON</SectionLabel>
+              <SectionLabel>WHY NOT?</SectionLabel>
               {NOT_DELIVERED_REASONS.map((r) => (
                 <ChoiceTile key={r.code} selected={reason === r.code} onClick={() => setReason(r.code)}
                             className="min-h-[52px] justify-start gap-2 px-4 text-left">

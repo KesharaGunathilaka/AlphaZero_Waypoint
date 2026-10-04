@@ -1,24 +1,21 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { AccountButton } from "@/components/waypoint/account-button";
 import { cn } from "@/lib/utils";
 import { DISPATCHER } from "./data";
 import { useRun } from "./use-run";
 
 /**
- * The driver's screens live behind a drawer inside the phone, not on a bar beside it:
- * a driver only ever sees the handset, so the navigation has to fit in it.
+ * The driver moves forward with the big button on each screen; this menu only holds the few places a
+ * driver jumps to on purpose, and the account. No screen codes: a driver should never see "R1".
  */
-const SCREENS = [
-  ["run", "My run", "●", "R1"],
-  ["moving", "Driving", "➤", "R1"],
-  ["complete", "Route complete", "◆", "R1"],
-  ["stop", "Stop details", "▣", "R2"],
-  ["deliver", "Record delivery", "✓", "R3"],
-  ["problem", "Report a problem", "⚑", "R4"],
+const MENU = [
+  ["run", "My run", "●"],
+  ["problem", "Report a problem", "⚑"],
 ] as const;
 
-export type DriverScreen = (typeof SCREENS)[number][0];
+export type DriverScreen = "run" | "complete" | "stop" | "deliver" | "problem";
 
 type DriverNav = {
   screen: DriverScreen;
@@ -66,22 +63,24 @@ export function DriverNavProvider({
   );
 }
 
-/** Hamburger that opens the drawer; the bars fold into a cross while it is open. */
+/** Labelled menu button: an icon alone ("hamburger") is easy to miss for someone new to apps. */
 export function MenuButton() {
   const { menuOpen, openMenu, closeMenu } = useDriverNav();
-  const bar = "absolute h-0.5 w-5 rounded-full bg-wp-text transition-transform duration-200";
+  const bar = "absolute h-0.5 w-4 rounded-full bg-wp-text transition-transform duration-200";
 
   return (
     <button
       type="button"
-      aria-label={menuOpen ? "Close menu" : "Open menu"}
       aria-expanded={menuOpen}
       onClick={menuOpen ? closeMenu : openMenu}
-      className="relative flex size-11 flex-shrink-0 cursor-pointer items-center justify-center rounded-[10px] border border-wp-border bg-wp-surface"
+      className="flex h-11 flex-shrink-0 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-[10px] border border-wp-border bg-wp-surface px-2"
     >
-      <span className={cn(bar, menuOpen ? "rotate-45" : "-translate-y-1.5")} />
-      <span className={cn(bar, "transition-opacity", menuOpen && "opacity-0")} />
-      <span className={cn(bar, menuOpen ? "-rotate-45" : "translate-y-1.5")} />
+      <span aria-hidden className="relative flex h-3 w-4 items-center justify-center">
+        <span className={cn(bar, menuOpen ? "rotate-45" : "-translate-y-1")} />
+        <span className={cn(bar, "transition-opacity", menuOpen && "opacity-0")} />
+        <span className={cn(bar, menuOpen ? "-rotate-45" : "translate-y-1")} />
+      </span>
+      <span className="text-[10px] leading-none font-semibold">{menuOpen ? "Close" : "Menu"}</span>
     </button>
   );
 }
@@ -133,7 +132,7 @@ export function NavDrawer() {
         </div>
 
         <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
-          {SCREENS.map(([key, label, glyph, code]) => {
+          {MENU.map(([key, label, glyph]) => {
             const active = key === screen;
             return (
               <button
@@ -148,7 +147,6 @@ export function NavDrawer() {
               >
                 <span className="w-5 text-center text-lg leading-none">{glyph}</span>
                 <span className="flex-1">{label}</span>
-                <span className={cn("text-[11px]", active ? "text-wp-info" : "text-wp-muted")}>{code}</span>
               </button>
             );
           })}
@@ -161,13 +159,14 @@ export function NavDrawer() {
           </span>
           <input type="checkbox" className="size-5" checked={outbox.simulated} onChange={(e) => outbox.simulate(e.target.checked)} />
         </label>
-        <div className="border-t border-wp-border p-3">
+        <div className="flex flex-col gap-2 border-t border-wp-border p-3">
           <a
             href={`tel:${DISPATCHER.tel}`}
             className="flex h-12 items-center justify-center rounded-xl bg-wp-action font-semibold text-wp-on-action"
           >
             ☎ Call dispatcher
           </a>
+          <AccountButton showName className="justify-center" />
         </div>
       </nav>
     </div>

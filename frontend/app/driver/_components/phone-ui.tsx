@@ -8,12 +8,15 @@ import { useRun } from "./use-run";
 
 // Building blocks for the driver's phone screens: large type and 44–56px touch targets.
 
-/** A 360×800 handset — the small end of the phones drivers actually carry. */
+/**
+ * The driver's screen. On a phone it fills the whole display (every pixel is for the road, not a frame);
+ * on a bigger screen (demo, office) it shows as a 360×800 handset, the small end of the phones drivers carry.
+ */
 export function PhoneScreen({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div
       data-screen-label={label}
-      className="relative flex h-[800px] max-h-[calc(100dvh-2rem)] max-sm:max-h-[calc(100dvh-6rem)] w-[360px] max-w-full flex-col overflow-hidden rounded-[22px] border border-wp-border bg-wp-canvas text-base shadow-lg"
+      className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-wp-canvas text-base sm:h-[800px] sm:max-h-[calc(100dvh-2rem)] sm:w-[360px] sm:rounded-[22px] sm:border sm:border-wp-border sm:shadow-lg"
     >
       {children}
       <NavDrawer />
@@ -32,7 +35,8 @@ export function TopBar({ children }: { children: ReactNode }) {
 }
 
 export function BottomBar({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("border-t border-wp-border bg-wp-surface px-4 py-3", className)}>{children}</div>;
+  // Safe-area padding keeps the buttons clear of the phone's home bar.
+  return <div className={cn("border-t border-wp-border bg-wp-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]", className)}>{children}</div>;
 }
 
 export function Body({ children, className }: { children: ReactNode; className?: string }) {
@@ -117,7 +121,7 @@ export function SyncPill() {
   if (!outbox.online) {
     return (
       <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-offline">
-        ○ Offline · {outbox.pending} to send
+        ○ No signal · {outbox.pending} to send
       </div>
     );
   }
@@ -130,7 +134,7 @@ export function SyncPill() {
   }
   return (
     <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-good">
-      ✓ Synced{outbox.lastSyncAt ? ` ${formatTime(outbox.lastSyncAt)}` : ""}
+      ✓ All sent{outbox.lastSyncAt ? ` ${formatTime(outbox.lastSyncAt)}` : ""}
     </div>
   );
 }
@@ -147,7 +151,7 @@ export function OfflineBanner() {
         <div className="rounded-xl bg-wp-offline-tint p-3 leading-[22px] font-semibold text-wp-offline">
           ○ No signal{outbox.simulated ? " (simulated)" : ""}. Everything you record is saved on this phone and sent
           when signal returns.
-          {outbox.pending > 0 && <div className="text-[13px] font-normal">{outbox.pending} waiting to send.</div>}
+          {outbox.pending > 0 && <div className="text-[13px] font-normal">{outbox.pending} {outbox.pending === 1 ? "record" : "records"} (arrivals, deliveries) waiting to send.</div>}
         </div>
       )}
       {outbox.online && fromCache && run && (
