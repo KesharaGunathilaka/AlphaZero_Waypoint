@@ -29,7 +29,7 @@ capabilities. Plans between the 16:00 cutoff and the first departures at 03:30.
 
 | Booklet need | Where the app answers it |
 |---|---|
-| Visibility into progress and problems after vehicles leave | Live: trips sorted by risk, stops done, alerts with replies (Send partial, Hold vehicle) |
+| Visibility into progress and problems after vehicles leave | Live overview on one large screen for both depots: delivered rings, a fleet timeline, alerts with replies (Send partial, Hold vehicle, Move to next delivery day), stops by district, trips by status, fuel; Trips and End of day hold the full lists |
 | Explain deferral decisions | Every deferral carries the reason the store is told; *Try to fit* shows every vehicle and the rule that blocks it |
 | Identify outlets already skipped | Last 5 runs per deferred order, "Skipped last run too", Records filter "Skipped 2+ runs in a row" |
 | (Today: spreadsheet + memory of restrictions) | The engine builds the plan; every booklet rule is checked on each change; a plan that breaks one cannot be sent |
@@ -56,6 +56,8 @@ capabilities. Plans between the 16:00 cutoff and the first departures at 03:30.
 | "Try to fit" opens a dialog listing **every vehicle and why it cannot take the order**, grouped by rule ([`04`](ux/04-dispatcher-why-deferred.jpg)) | The dispatcher can prove a deferral was unavoidable: for OUT078 both VEH057 trips are full, five trucks cannot reach a van-only outlet, VEH058 is in the workshop, fifteen vehicles cannot carry chilled goods |
 | Send is blocked, with the reason in words, while any rule is broken | A plan that breaks a booklet rule can never reach the depot |
 | Live view uses the same vehicle IDs as the plan (VEH057, not RV-03) and sorts trips by risk ([`18`](ux/18-dispatcher-live.jpg)) | One name per vehicle across every screen and role |
+| Live **Overview** fits one large screen with no page scrolling (checked at 1920×1080, 1440×900 and 1280×800): a strip per depot (delivered ring, trips back / on road / at depot, Fresh at risk, attention, no signal), a **fleet timeline** with a lane per vehicle and a bar per trip from planned departure to return, filled by stops done and coloured by status, the alerts beside it, and stops by district, trips by status and fuel along the bottom ([`19`](ux/19-dispatcher-live-overview.jpg)) | After planning, the dispatcher watches the day on the office screen: problems, progress and what is still at the depot are visible at once, without scrolling |
+| Click for detail without leaving the screen: a trip bar or alert opens that trip's stops (plan against actual) in a side panel; a district lists its trips; a status in the donut highlights those trips on the timeline. *Trips* (full list) and *End of day* (outcomes, failed deliveries, fuel against the weekly quota) are one tab away, plus a Full screen button for a wall display | The overview stays calm; detail is one click away and the dispatcher never loses their place. Phones and tablets stack the same panels and scroll |
 
 **Evidence**
 - Orders open → plan sent: **3 clicks on one screen, always the same button position** (Close orders

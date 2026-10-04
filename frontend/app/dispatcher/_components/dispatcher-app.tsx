@@ -145,10 +145,12 @@ export function DispatcherApp() {
     setTab("plan");
   }
 
+  // Live is watched on a large display all day: it uses the full width; planning keeps a readable width.
+  const width = tab === "live" ? "max-w-[2200px]" : "max-w-[1440px]";
   return (
     <div className="min-h-screen bg-wp-canvas text-[13px] leading-[18px] text-wp-text tabular-nums">
       <header className="sticky top-0 z-30 border-b border-wp-border bg-wp-surface">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6">
+        <div className={cn("mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6", width)}>
           <Logo />
           {depots.data && depots.data.depots.length > 1 ? (
             <Select aria-label="Depot" value={depots.data.current ?? ""} disabled={busy}
@@ -177,7 +179,7 @@ export function DispatcherApp() {
             <AccountButton />
           </div>
         </div>
-        <nav aria-label="Dispatcher sections" className="mx-auto flex max-w-[1440px] gap-1 overflow-x-auto px-2 sm:px-4">
+        <nav aria-label="Dispatcher sections" className={cn("mx-auto flex gap-1 overflow-x-auto px-2 sm:px-4", width)}>
           {TABS.map(([key, label]) => (
             <button
               key={key}

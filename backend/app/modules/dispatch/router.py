@@ -302,9 +302,12 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
         "depots": await rows(db, "SELECT depot_id, name FROM depot WHERE depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) ORDER BY name", {"deps": visible}),
         "runs": runs,
         "fleet": await rows(db, f"""
-            SELECT f.*, v.source_id AS vehicle_source_id, dp.name AS depot FROM fleet_status f
+            SELECT f.*, v.source_id AS vehicle_source_id, dp.name AS depot, di.name AS district, b.code AS brand_code,
+                   r.return_at, r.trip_minutes
+            FROM fleet_status f
             JOIN route r ON r.route_id = f.route_id JOIN vehicle v ON v.vehicle_id = r.vehicle_id
-            JOIN depot dp ON dp.depot_id = r.depot_id
+            JOIN depot dp ON dp.depot_id = r.depot_id JOIN district di ON di.district_id = r.district_id
+            JOIN brand b ON b.brand_id = r.brand_id
             WHERE f.route_id IN ({route_scope})
             ORDER BY dp.name, v.source_id, f.route_seq""", {"runs": run_ids}),
         "exceptions": await rows(db, f"""

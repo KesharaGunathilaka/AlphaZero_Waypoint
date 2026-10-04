@@ -141,6 +141,10 @@ export type FleetRow = {
   route_id: number;
   depot: string;
   run_id: number;
+  district: string;
+  brand_code: BrandCode;
+  return_at: string;
+  trip_minutes: number | null;
   vehicle_code: string;
   vehicle_source_id: string;
   route_seq: number;
