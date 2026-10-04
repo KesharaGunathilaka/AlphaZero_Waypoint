@@ -15,13 +15,13 @@ the same email as a seeded account (table below). The database role is what coun
 
 | Role | Email (create the same user in Clerk) | Works at |
 |---|---|---|
-| Dispatcher | dispatcher@waypoint.demo | Kandy depot |
-| Loader | loader.kandy@waypoint.demo | Kandy depot |
-| Driver | driver.veh057@waypoint.demo | VEH057 (refrigerated van, Kandy) |
-| Driver | driver.veh059@waypoint.demo / driver.veh060@waypoint.demo | VEH059 / VEH060 |
-| Store manager | store.out077@waypoint.demo | OUT077 (Fresh, Kandy, van-only) |
-| Store manager | store.out078@waypoint.demo | OUT078 (gets the deferral notice) |
-| Admin | admin@waypoint.demo | everything |
+| Dispatcher | dispatcher@example.com | Kandy depot |
+| Loader | loader.kandy@example.com | Kandy depot |
+| Driver | driver.veh057@example.com | VEH057 (refrigerated van, Kandy) |
+| Driver | driver.veh059@example.com / driver.veh060@example.com | VEH059 / VEH060 |
+| Store manager | store.out077@example.com | OUT077 (Fresh, Kandy, van-only) |
+| Store manager | store.out078@example.com | OUT078 (gets the deferral notice) |
+| Admin | admin@example.com | everything |
 
 ## Everyone
 

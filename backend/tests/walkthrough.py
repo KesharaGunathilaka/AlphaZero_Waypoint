@@ -18,8 +18,8 @@ def as_(email):
     return {"X-Dev-User": email}
 
 
-SM, DSP, LDR, DRV = (as_("store.out077@waypoint.demo"), as_("dispatcher@waypoint.demo"),
-                     as_("loader.kandy@waypoint.demo"), as_("driver.veh057@waypoint.demo"))
+SM, DSP, LDR, DRV = (as_("store.out077@example.com"), as_("dispatcher@example.com"),
+                     as_("loader.kandy@example.com"), as_("driver.veh057@example.com"))
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -71,7 +71,7 @@ with TestClient(app) as c:
     print("  released:", rel)
 
     # OUT078's manager sees the deferral notice
-    n78 = ok(c.get("/api/v1/store/notices", headers=as_("store.out078@waypoint.demo")))
+    n78 = ok(c.get("/api/v1/store/notices", headers=as_("store.out078@example.com")))
     print("4 OUT078 notices:", [n["title"] + " | " + n["body"] for n in n78 if n["kind"] == "deferred"])
 
     # Loader loads VEH057's trip with OUT077, short 2 crates on OUT079
