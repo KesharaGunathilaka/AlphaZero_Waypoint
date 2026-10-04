@@ -1,14 +1,20 @@
-import { clerkMiddleware } from '@clerk/nextjs/server'
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-export default clerkMiddleware()
+/**
+ * Next 16 renamed `middleware.ts` to `proxy.ts`; `clerkMiddleware` is unchanged.
+ *
+ * This only makes the session available to `auth()`. It deliberately protects
+ * nothing: Clerk now recommends resource-based checks, so each route enforces
+ * its own access in its layout via `requireRole` (see `lib/auth.ts`). Path
+ * matching in the proxy can diverge from how Next actually routes a request.
+ */
+export default clerkMiddleware();
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
-    // Always run for API routes
-    '/(api|trpc)(.*)',
-    // Always run for Clerk-specific frontend API routes
-    '/__clerk/(.*)',
+    // Everything except Next internals and static files, unless a search param is present.
+    "/((?!_next|[^?]*\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    // Always run for API routes.
+    "/(api|trpc)(.*)",
   ],
-}
+};

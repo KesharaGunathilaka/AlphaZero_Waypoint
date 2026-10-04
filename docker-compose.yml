@@ -1,55 +1,48 @@
+name: waypoint
+
 services:
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    image: nextjs-app:latest
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
+  # PostgreSQL 18 (Neon runs 18). On the FIRST start (empty volume) db/init/10-load-waypoint.sh
+  # creates schema "wp" and loads data/general/*.csv. Later starts reuse the volume.
+  db:
+    image: postgres:18-alpine   # same major version as Neon
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-waypoint}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
+      POSTGRES_DB: ${POSTGRES_DB:-waypoint}
     ports:
-      - "3000:3000"
-    env_file: ./frontend/.env
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: fastapi-service:latest
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file: ./backend/.env
-    ports:
-      - "8000:8000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  postgres:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    env_file: ./.env
+      - "${DB_PORT:-5433}:5432"
     volumes:
-      - postgres-volume:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql   # PG 18 images keep data under /var/lib/postgresql/18
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db:/waypoint-db:ro
+      - ./data/general:/waypoint-data:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
+      # -h 127.0.0.1: during first-start loading Postgres only listens on its socket,
+      # so a TCP check stays "unhealthy" until schema and data are fully loaded.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-waypoint} -d ${POSTGRES_DB:-waypoint}"]
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 5s
+      retries: 30
+      start_period: 20s
+
+  api:
+    build: ./backend
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-waypoint}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
+      POSTGRES_DB: ${POSTGRES_DB:-waypoint}
+      ALLOWED_HOSTS: '["localhost", "127.0.0.1", "api"]'
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # web (Next.js) goes here once `pnpm build` passes in frontend/ (see docs/database.md).
 
 volumes:
-  kafka-data:
-  postgres-volume:
+  pgdata:

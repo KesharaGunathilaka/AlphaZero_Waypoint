@@ -1,19 +1,19 @@
 import { redirect } from "next/navigation";
 import { getUserContext } from "@/lib/auth";
+import { ROLE_HOME } from "@/lib/roles";
 
-const ROLE_ROUTES = {
-  "org:dispatcher": "/dispatcher",
-  "org:driver": "/driver",
-  "org:loader": "/loader",
-  "org:store-manager": "/store-manager",
-} as const;
-
-export default async function HomePage() {
+/**
+ * The role router. Nobody picks a role any more: whoever signs in is sent to the
+ * app their Clerk organization role entitles them to.
+ */
+export default async function Home() {
   const context = await getUserContext();
 
   if (!context.ok) {
-    redirect("/sign-in");
+    if (context.reason === "no-org") redirect("/select-org");
+    if (context.reason === "signed-out") redirect("/sign-in");
+    redirect("/no-access");
   }
 
-  redirect(ROLE_ROUTES[context.role]);
+  redirect(ROLE_HOME[context.role]);
 }
