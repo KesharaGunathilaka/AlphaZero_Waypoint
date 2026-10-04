@@ -45,7 +45,7 @@ export function DepartureCheck({
 
   return (
     <TabletScreen label="L3 Departure check">
-      <header className="flex h-[72px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
+      <header className="flex min-h-[72px] flex-none flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6">
         <div className="flex items-center gap-5">
           <button type="button" onClick={onBack} className={cn(TOUCH_BUTTON, "h-11")}>
             ‹ Vehicles
@@ -55,7 +55,7 @@ export function DepartureCheck({
         <LiveStatus who={who} outbox={outbox} />
       </header>
 
-      <div className="grid flex-1 grid-cols-[minmax(0,1fr)_400px] gap-6 p-6">
+      <div className="grid flex-1 grid-cols-1 gap-6 p-4 md:p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-3">
             <TabletPill tone="good" className="h-12 px-5 text-[17px]">
@@ -94,7 +94,7 @@ export function DepartureCheck({
 
           <div className={cn(CARD, "flex flex-col gap-4 p-5")}>
             <div className="text-[13px] font-semibold tracking-[.06em] text-wp-muted">FINAL LOAD</div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
               <Meter
                 label="Weight"
                 value={`${kg(progress.weightKg)} of ${kg(vehicle.capacityKg)} kg · ${weightPercent}%`}
@@ -108,7 +108,7 @@ export function DepartureCheck({
                 fillClassName="bg-wp-gauge-amber"
               />
             </div>
-            <div className="grid grid-cols-3 gap-4 border-t border-wp-border pt-4">
+            <div className="grid grid-cols-1 gap-4 border-t border-wp-border pt-4 sm:grid-cols-3">
               {[
                 ["Loaded by", who],
                 ["Checked", checkedAt],

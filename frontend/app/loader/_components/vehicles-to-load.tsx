@@ -43,7 +43,7 @@ export function VehiclesToLoad({
 
   return (
     <TabletScreen label="L1 Vehicles to load">
-      <header className="flex h-[72px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
+      <header className="flex min-h-[72px] flex-none flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6">
         <div className="flex items-center gap-4">
           <Logo variant="light" className="h-9" />
           <span className="text-wp-text-2">
@@ -88,7 +88,7 @@ export function VehiclesToLoad({
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {shown.map(({ vehicle: v, progress }) => {
             const status = vehicleStatus(v, progress);
             return (
@@ -104,14 +104,14 @@ export function VehiclesToLoad({
               >
                 <div className="flex w-full items-start justify-between">
                   <div>
-                    <div className="text-3xl leading-8 font-bold">{v.label}</div>
+                    <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.label}</div>
                     <div className="mt-1 text-wp-text-2">
                       {v.type} · {v.stops} stops
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-[13px] text-wp-muted">Departs</div>
-                    <div className="text-3xl leading-8 font-bold">{v.departs}</div>
+                    <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.departs}</div>
                   </div>
                 </div>
                 <div className="h-2 w-full rounded bg-wp-surface-2">

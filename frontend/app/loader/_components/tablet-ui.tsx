@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AccountButton } from "@/components/waypoint/account-button";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/components/waypoint/status";
 import type { useOutbox } from "@/lib/offline/outbox";
@@ -10,7 +11,8 @@ export function TabletScreen({ label, children, className }: { label: string; ch
     <section
       data-screen-label={label}
       className={cn(
-        "flex min-h-[800px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas text-wp-text",
+        // Full screen on the dock tablet itself; framed at 1280 px only on a larger monitor (demo).
+        "flex min-h-[100dvh] w-full flex-col bg-wp-canvas text-wp-text xl:min-h-[800px] xl:w-[1280px] xl:overflow-hidden xl:rounded-xl xl:border xl:border-wp-border",
         className,
       )}
     >
@@ -52,10 +54,11 @@ export function LiveStatus({ who, outbox, plan }: { who: string; outbox: Outbox;
       ? { tone: "info", text: `● Sending ${outbox.pending}…` }
       : { tone: "good", text: "● Live" };
   return (
-    <div className="flex items-center gap-4">
-      <span className="text-wp-text-2">{who}</span>
+    <div className="flex flex-wrap items-center gap-3">
       <TabletPill tone={state.tone}>{state.text}</TabletPill>
       {plan && <span className="font-semibold">Plan {plan.version}</span>}
+      <span className="text-wp-text-2">{who}</span>
+      <AccountButton />
     </div>
   );
 }

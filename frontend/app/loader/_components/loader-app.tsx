@@ -33,7 +33,7 @@ export function LoaderApp() {
   }
 
   return (
-    <div data-theme="dark" className="flex min-h-screen flex-col items-center gap-4 bg-[#05080d] p-4 text-base text-wp-text tabular-nums">
+    <div data-theme="dark" className="flex min-h-screen flex-col items-center bg-[#05080d] text-base text-wp-text tabular-nums xl:p-4">
       {screen === "vehicles" || !vehicle ? (
         <VehiclesToLoad
           vehicles={dock.vehicles}

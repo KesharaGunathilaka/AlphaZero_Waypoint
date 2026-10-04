@@ -101,19 +101,19 @@ export function LoadList({
 
   return (
     <TabletScreen label="L2 Load list" className="relative">
-      <header className="flex h-[88px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
-        <div className="flex items-center gap-5">
+      <header className="flex min-h-[88px] flex-none flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6">
+        <div className="flex items-center gap-4">
           <button type="button" onClick={onBack} className={TOUCH_BUTTON}>
             ‹ Vehicles
           </button>
-          <div className="text-3xl leading-8 font-bold">
-            {vehicle.label}{" "}
-            <span className="text-base font-medium text-wp-text-2">
+          <div>
+            <div className="text-3xl leading-8 font-bold">{vehicle.label}</div>
+            <div className="text-base font-medium text-wp-text-2">
               {vehicle.type} · departs {vehicle.departs}
-            </span>
+            </div>
           </div>
         </div>
-        <div className="w-[340px]">
+        <div className="w-full min-w-[220px] flex-1 md:max-w-[340px]">
           <div className="mb-2 flex justify-between">
             <b>
               {progress.confirmed} of {progress.lines} lines loaded
@@ -127,7 +127,7 @@ export function LoadList({
         <LiveStatus who={who} outbox={outbox} />
       </header>
 
-      <div className="grid flex-1 grid-cols-[minmax(0,1fr)_340px] gap-6 p-6">
+      <div className="grid flex-1 grid-cols-1 gap-6 p-4 md:p-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="flex flex-col gap-3">
           <div>
             <div className="text-xl leading-[26px] font-semibold">Load in this order — last stop first</div>
@@ -176,13 +176,13 @@ export function LoadList({
             </div>
           </div>
           <div className="flex-1" />
-          {/* Every line loaded or flagged, and every stop signed off. */}
+          {/* Every line loaded or flagged, and every stop signed off. Sticks to the bottom on a portrait tablet. */}
           <button
             type="button"
             onClick={onDepartureCheck}
             disabled={!ready}
             className={cn(
-              "flex h-[72px] items-center justify-center rounded-[10px] text-[17px] font-semibold",
+              "sticky bottom-3 flex h-[72px] items-center justify-center rounded-[10px] px-4 text-center text-[17px] font-semibold shadow-lg lg:static lg:shadow-none",
               ready
                 ? "cursor-pointer bg-wp-action text-wp-on-action"
                 : "cursor-default border border-wp-border bg-wp-surface-2 text-wp-muted",
@@ -254,7 +254,7 @@ function StopCard({
             </span>
           )}
         </span>
-        <span className="flex items-center gap-4 whitespace-nowrap">
+        <span className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 whitespace-nowrap">
           {stop.confirmed && progress.flags > 0 && (
             <span className="font-semibold text-wp-warn">Confirmed with a flag</span>
           )}
@@ -270,20 +270,6 @@ function StopCard({
 
       {open && (
         <div className="border-t border-wp-border bg-wp-surface">
-          <div className="flex justify-end px-4 py-3">
-            <button
-              type="button"
-              onClick={onConfirmStop}
-              disabled={stop.confirmed}
-              className={cn(PRIMARY_TOUCH_BUTTON, "disabled:cursor-default disabled:opacity-60")}
-            >
-              {stop.confirmed
-                ? "✓ Stop confirmed"
-                : progress.flags > 0
-                  ? `Confirm stop with ${progress.flags} flagged`
-                  : "Confirm stop"}
-            </button>
-          </div>
           {stop.lines.map((line) =>
             line.flag ? (
               <FlaggedLine key={line.id} line={line} onEditFlag={() => onFlagLine(line.id)} />
@@ -296,6 +282,23 @@ function StopCard({
               />
             ),
           )}
+          {/* After the lines: tick them off, then sign the stop off. */}
+          <div className="border-t border-wp-border p-3">
+            <button
+              type="button"
+              onClick={onConfirmStop}
+              disabled={stop.confirmed}
+              className={cn(PRIMARY_TOUCH_BUTTON, "w-full disabled:cursor-default disabled:opacity-60")}
+            >
+              {stop.confirmed
+                ? "✓ Stop confirmed"
+                : progress.flags > 0
+                  ? `Confirm stop ${stop.stop} with ${progress.flags} flagged`
+                  : progress.confirmed < progress.lines
+                    ? `All loaded in full · confirm stop ${stop.stop}`
+                    : `Confirm stop ${stop.stop}`}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -317,10 +320,12 @@ function LineRow({ line, onToggle, onFlag }: { line: LoadLine; onToggle: () => v
       >
         {line.confirmed && "✓"}
       </button>
-      <div className="flex-1">
-        <b>{line.product}</b> · {line.units} {line.unit}
+      <div className="w-20 flex-none text-right">
+        <div className="text-[24px] leading-7 font-bold">{line.units}</div>
+        <div className="text-[12px] text-wp-text-2">{line.unit}</div>
       </div>
-      <span className="rounded-md border border-wp-border px-2 py-1 text-[13px] text-wp-text-2">{line.tag}</span>
+      <div className="min-w-0 flex-1 text-[17px] font-semibold">{line.product}</div>
+      <span className="hidden rounded-md border border-wp-border px-2 py-1 text-[13px] text-wp-text-2 sm:inline">{line.tag}</span>
       <button
         type="button"
         aria-label={`Flag ${line.product}`}
