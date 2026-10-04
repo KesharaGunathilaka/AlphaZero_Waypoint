@@ -281,18 +281,41 @@ async def vehicle_availability(vehicle_id: int, body: VehicleIn, user: Dispatche
 
 # --------------------------------------------------------------- monitor ----
 @router.get("/monitor")
-async def monitor(user: Dispatcher, db: DbSession):
-    """Live board: progress per run, every vehicle (with last signal), and what needs attention."""
+async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
+    """Live board for the depots this dispatcher watches ("all", or one depot id): the current run of each
+    depot, every trip, what needs attention, stop-by-stop progress, and the end-of-day close-out."""
+    visible = [r["depot_id"] for r in await rows(db, """
+        SELECT depot_id FROM depot WHERE CAST(:all AS boolean) OR depot_id = :d ORDER BY name""",
+        {"all": user.all_depots or user.role == "admin", "d": user.depot_id})]
+    chosen = visible if depot == "all" else [d for d in visible if str(d) == depot]
+    # Each depot's current run: the one on the road, else the next planned one, else the last finished one.
+    runs = await rows(db, """
+        SELECT DISTINCT ON (rp.depot_id) rp.*, dp.name AS depot
+        FROM run_progress rp JOIN depot dp ON dp.depot_id = rp.depot_id
+        WHERE rp.depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) AND rp.state IN ('planned', 'in_progress', 'complete')
+        ORDER BY rp.depot_id, CASE rp.state WHEN 'in_progress' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
+                 CASE WHEN rp.state = 'complete' THEN -(rp.service_date - DATE '2000-01-01')
+                      ELSE rp.service_date - DATE '2000-01-01' END""", {"deps": chosen})
+    run_ids = [r["run_id"] for r in runs]
+    route_scope = "SELECT r.route_id FROM route r JOIN plan p ON p.plan_id = r.plan_id WHERE p.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb)))"
     return {
-        "runs": await rows(db, "SELECT * FROM run_progress WHERE state IN ('planned', 'in_progress', 'complete') "
-                               "ORDER BY service_date DESC LIMIT 3"),
-        "fleet": await rows(db, """
-            SELECT f.*, v.source_id AS vehicle_source_id FROM fleet_status f
+        "depots": await rows(db, "SELECT depot_id, name FROM depot WHERE depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) ORDER BY name", {"deps": visible}),
+        "runs": runs,
+        "fleet": await rows(db, f"""
+            SELECT f.*, v.source_id AS vehicle_source_id, dp.name AS depot FROM fleet_status f
             JOIN route r ON r.route_id = f.route_id JOIN vehicle v ON v.vehicle_id = r.vehicle_id
-            ORDER BY v.source_id, f.route_seq"""),
-        "exceptions": await rows(db, "SELECT * FROM monitor_exceptions ORDER BY urgency, since"),
-        # Stop by stop for every live trip: plan against what the phones have reported.
-        "stops": await rows(db, """
+            JOIN depot dp ON dp.depot_id = r.depot_id
+            WHERE f.route_id IN ({route_scope})
+            ORDER BY dp.name, v.source_id, f.route_seq""", {"runs": run_ids}),
+        "exceptions": await rows(db, f"""
+            SELECT e.*, dp.name AS depot FROM monitor_exceptions e
+            LEFT JOIN run ru ON ru.run_id = e.run_id
+            LEFT JOIN route rt ON rt.route_id = e.route_id
+            LEFT JOIN depot dp ON dp.depot_id = COALESCE(ru.depot_id, rt.depot_id)
+            WHERE e.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb))) OR e.route_id IN ({route_scope})
+            ORDER BY e.urgency, e.since""", {"runs": run_ids}),
+        # Stop by stop for every trip: plan against what the phones have reported.
+        "stops": await rows(db, f"""
             SELECT s.route_id, s.stop_id, s.seq, ou.code AS outlet_code, ou.name AS outlet_name, s.planned_arrival,
                    a.device_time AS arrived_at,
                    (SELECT min(d.device_time) FROM stop_order so JOIN current_delivery d ON d.order_id = so.order_id
@@ -304,10 +327,74 @@ async def monitor(user: Dispatcher, db: DbSession):
                      WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS proof_files
             FROM stop s JOIN outlet ou ON ou.outlet_id = s.outlet_id
             LEFT JOIN stop_arrival a ON a.stop_id = s.stop_id
-            WHERE s.removed_at IS NULL AND s.route_id IN (SELECT route_id FROM fleet_status)
-            ORDER BY s.route_id, s.seq"""),
+            WHERE s.removed_at IS NULL AND s.route_id IN ({route_scope})
+            ORDER BY s.route_id, s.seq""", {"runs": run_ids}),
+        "closeout": await closeout(db, run_ids),
         "server_time": await scalar(db, "SELECT now()"),
     }
+
+
+async def closeout(db, run_ids: list[int]) -> list[dict]:
+    """End of the day, per run: what happened to every order, failed deliveries still to move to the next
+    run, and each vehicle's fuel (the day's route distance against its weekly quota)."""
+    out = []
+    for run_id in run_ids:
+        counts = await one(db, """
+            SELECT ru.run_id, ru.service_date, ru.state, dp.name AS depot,
+                   count(*) FILTER (WHERE h.status IN ('delivered', 'received') AND d.outcome = 'delivered') AS delivered,
+                   count(*) FILTER (WHERE d.outcome = 'delivered_in_part') AS delivered_in_part,
+                   count(*) FILTER (WHERE d.outcome = 'not_delivered') AS not_delivered,
+                   count(*) FILTER (WHERE d.delivery_id IS NULL) AS not_yet,
+                   count(*) FILTER (WHERE h.status = 'received') AS confirmed_by_store,
+                   count(*) FILTER (WHERE d.outcome IN ('delivered', 'delivered_in_part') AND h.status <> 'received') AS awaiting_store
+            FROM run ru JOIN depot dp ON dp.depot_id = ru.depot_id
+            JOIN plan p ON p.run_id = ru.run_id
+            JOIN stop_order so ON so.plan_id = p.plan_id AND so.removed_at IS NULL
+            JOIN order_header h ON h.order_id = so.order_id
+            LEFT JOIN current_delivery d ON d.order_id = so.order_id
+            WHERE ru.run_id = :r
+            GROUP BY ru.run_id, ru.service_date, ru.state, dp.name""", {"r": run_id})
+        if counts is None:
+            continue
+        counts["failed"] = await rows(db, """
+            SELECT h.order_id, h.confirmation_no, ou.code AS outlet_code, ou.name AS outlet_name, h.temp,
+                   d.reason_code, rc.label AS reason, d.note, d.device_time
+            FROM order_header h JOIN outlet ou ON ou.outlet_id = h.outlet_id
+            JOIN current_delivery d ON d.order_id = h.order_id
+            LEFT JOIN reason_code rc ON rc.scope = d.reason_scope AND rc.code = d.reason_code
+            WHERE h.run_id = :r AND h.status = 'not_delivered' ORDER BY ou.code""", {"r": run_id})
+        counts["fuel"] = await rows(db, """
+            SELECT v.vehicle_id, v.source_id, round(sum(rt.est_fuel_l), 1) AS today_l,
+                   round(sum(rt.est_distance_km), 0) AS today_km,
+                   fuel_quota_for(v.vehicle_id, week_start(ru.service_date)) AS quota_l,
+                   round(fuel_used_week(v.vehicle_id, week_start(ru.service_date)), 1) AS used_week_l,
+                   round(fuel_quota_for(v.vehicle_id, week_start(ru.service_date))
+                         - fuel_used_week(v.vehicle_id, week_start(ru.service_date)), 1) AS left_week_l
+            FROM route rt JOIN plan p ON p.plan_id = rt.plan_id JOIN run ru ON ru.run_id = p.run_id
+            JOIN vehicle v ON v.vehicle_id = rt.vehicle_id
+            WHERE ru.run_id = :r AND rt.state <> 'cancelled' AND p.state = 'released'
+            GROUP BY v.vehicle_id, v.source_id, ru.service_date ORDER BY v.source_id""", {"r": run_id})
+        out.append(counts)
+    return out
+
+
+class RequeueIn(BaseModel):
+    note: str | None = None
+
+
+@router.post("/orders/{order_id}/requeue")
+async def requeue(order_id: int, body: RequeueIn, user: Dispatcher, db: DbSession):
+    """A delivery that failed goes into the next run, with the driver's reason; the store is told the new day."""
+    reason = await one(db, "SELECT reason_code, note FROM current_delivery WHERE order_id = :o AND outcome = 'not_delivered'",
+                       {"o": order_id})
+    if reason is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "WP222", "message": "Only an order the driver could not deliver can be moved"})
+    await scalar(db, "SELECT requeue_order(:o, :r, :n, :u)",
+                 {"o": order_id, "r": reason["reason_code"] or "other", "n": body.note or reason["note"] or "Moved at the end of the day",
+                  "u": user.user_id})
+    moved = await one(db, "SELECT delivery_date, confirmation_no FROM order_header WHERE order_id = :o", {"o": order_id})
+    await db.commit()
+    return moved
 
 
 @router.post("/flags/{flag_id}/reply")
@@ -351,6 +438,8 @@ async def ledger(user: Dispatcher, db: DbSession):
     """Every deferral and delivery: the record of who was skipped, why, and what arrived."""
     return {
         "headline": await one(db, "SELECT * FROM ledger_headline"),
-        "records": await rows(db, "SELECT * FROM ledger ORDER BY at DESC LIMIT 200"),
+        "records": await rows(db, """
+            SELECT l.*, dp.name AS depot FROM ledger l JOIN outlet ou ON ou.outlet_id = l.outlet_id
+            JOIN depot dp ON dp.depot_id = ou.depot_id ORDER BY l.at DESC LIMIT 300"""),
         "per_day": await rows(db, "SELECT day, is_working, deferred FROM deferrals_per_day ORDER BY day"),
     }

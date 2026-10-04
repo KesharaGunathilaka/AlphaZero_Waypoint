@@ -35,6 +35,7 @@ export function Ledger() {
   const ledger = useApiData<LedgerData>("/dispatch/ledger", 60_000);
   const [preset, setPreset] = useState<Preset>("deferrals");
   const [brand, setBrand] = useState<"" | BrandCode>("");
+  const [depot, setDepot] = useState("");
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   if (!ledger.data) {
@@ -42,14 +43,15 @@ export function Ledger() {
   }
 
   const { headline, records, per_day } = ledger.data;
-  const rows = records.filter(PRESETS[preset].match).filter((r) => !brand || r.brand_code === brand);
+  const depots = [...new Set(records.map((r) => r.depot))].sort();
+  const rows = records.filter(PRESETS[preset].match).filter((r) => !brand || r.brand_code === brand).filter((r) => !depot || r.depot === depot);
   const week = per_day.slice(-7);
   const maxPerDay = Math.max(1, ...week.map((d) => d.deferred ?? 0));
   const skippedTwice = records.filter((r) => r.record_type === "deferral" && r.consecutive_skip);
 
   function exportCsv() {
-    const header = ["outlet", "order", "run", "record", "outcome", "reason", "note", "by", "when"];
-    const body = rows.map((r) => [r.outlet_name, r.confirmation_no, r.service_date, r.record_type, r.outcome, r.reason ?? "",
+    const header = ["depot", "outlet", "order", "run", "record", "outcome", "reason", "note", "by", "when"];
+    const body = rows.map((r) => [r.depot, r.outlet_name, r.confirmation_no, r.service_date, r.record_type, r.outcome, r.reason ?? "",
                                   r.note ?? "", r.decided_by, r.at]);
     const csv = [header, ...body].map((line) => line.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -81,7 +83,13 @@ export function Ledger() {
           <option value="S">Style</option>
           <option value="T">Tech</option>
         </Select>
-        <Button variant="link" onClick={() => { setPreset("all"); setBrand(""); }}>Reset</Button>
+        {depots.length > 1 && (
+          <Select aria-label="Depot" value={depot} onChange={(e) => setDepot(e.target.value)}>
+            <option value="">All depots</option>
+            {depots.map((d) => <option key={d} value={d}>{d}</option>)}
+          </Select>
+        )}
+        <Button variant="link" onClick={() => { setPreset("all"); setBrand(""); setDepot(""); }}>Reset</Button>
       </div>
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.3fr)]">
@@ -121,7 +129,8 @@ export function Ledger() {
               <div key={key} className="border-t border-wp-border">
                 <button type="button" aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })}
                         className={cn(ROW_COLUMNS, "min-h-9 w-full cursor-pointer items-center py-2 text-left")}>
-                  <div><BrandMonogram brand={BRAND[r.brand_code]} outlet={r.outlet_name} /></div>
+                  <div><BrandMonogram brand={BRAND[r.brand_code]} outlet={r.outlet_name} />
+                    {depots.length > 1 && <div className="ml-8 text-[11px] text-wp-muted">{r.depot} depot</div>}</div>
                   <div>{r.confirmation_no}</div>
                   <div>{formatDay(r.service_date)}</div>
                   <div><StatusPill state={style.state}>{style.label}</StatusPill></div>

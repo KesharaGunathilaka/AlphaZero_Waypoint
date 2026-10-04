@@ -125,6 +125,8 @@ export type PlanView = {
 // ---------------------------------------------------------------- monitor ----
 export type RunProgress = {
   run_id: number;
+  depot_id: number;
+  depot: string;
   service_date: string;
   state: string;
   routes_total: number;
@@ -137,6 +139,8 @@ export type RunProgress = {
 };
 export type FleetRow = {
   route_id: number;
+  depot: string;
+  run_id: number;
   vehicle_code: string;
   vehicle_source_id: string;
   route_seq: number;
@@ -153,6 +157,7 @@ export type FleetRow = {
 };
 export type Exception = {
   kind: string;
+  depot: string | null;
   urgency: number;
   severity: string;
   route_id: number | null;
@@ -174,7 +179,32 @@ export type MonitorStop = {
   outcomes: string | null;
   proof_files: number;
 };
-export type Monitor = { runs: RunProgress[]; fleet: FleetRow[]; exceptions: Exception[]; stops: MonitorStop[]; server_time: string };
+/** End of the day for one run: outcomes, failed deliveries still to move, and each vehicle's fuel. */
+export type Closeout = {
+  run_id: number;
+  service_date: string;
+  state: string;
+  depot: string;
+  delivered: number;
+  delivered_in_part: number;
+  not_delivered: number;
+  not_yet: number;
+  confirmed_by_store: number;
+  awaiting_store: number;
+  failed: { order_id: number; confirmation_no: string; outlet_code: string; outlet_name: string; temp: string;
+            reason_code: string | null; reason: string | null; note: string | null; device_time: string }[];
+  fuel: { vehicle_id: number; source_id: string; today_l: number; today_km: number; quota_l: number | null;
+          used_week_l: number; left_week_l: number | null }[];
+};
+export type Monitor = {
+  depots: { depot_id: number; name: string }[];
+  runs: RunProgress[];
+  fleet: FleetRow[];
+  exceptions: Exception[];
+  stops: MonitorStop[];
+  closeout: Closeout[];
+  server_time: string;
+};
 
 export const EXCEPTION_STYLE: Record<string, { label: string; state: Tone }> = {
   delivery_failed: { label: "Delivery failed", state: "crit" },
@@ -191,6 +221,7 @@ export const EXCEPTION_STYLE: Record<string, { label: string; state: Tone }> = {
 // ----------------------------------------------------------------- ledger ----
 export type LedgerRecord = {
   record_type: "deferral" | "delivery";
+  depot: string;
   record_id: string;
   order_id: number;
   confirmation_no: string;

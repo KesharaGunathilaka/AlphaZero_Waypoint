@@ -138,8 +138,9 @@ export function DispatcherApp() {
 
   async function resetDemo() {
     if (!window.confirm("Reset the demo? This deletes every order, plan and delivery and seeds a fresh demo day.")) return;
-    await act(() => request("/demo/reset", { method: "POST" }), (r: { orders: number; service_date: string }) =>
-      `Demo reset: ${r.orders} orders seeded for ${formatDay(r.service_date)}.`);
+    await act(() => request("/demo/reset", { method: "POST" }),
+      (r: { orders: number; service_date: string; peliyagoda?: { orders: number } }) =>
+        `Demo reset: ${r.orders} Kandy${r.peliyagoda ? ` and ${r.peliyagoda.orders} Peliyagoda` : ""} orders seeded for ${formatDay(r.service_date)}.`);
     setChosenDate(null);
     setTab("plan");
   }
