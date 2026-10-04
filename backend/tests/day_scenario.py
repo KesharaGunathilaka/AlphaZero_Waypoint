@@ -295,6 +295,16 @@ with TestClient(app) as c:
     check("6", "It cannot be moved twice", r.status_code == 409, r.text[:80])
     r = c.post(f"{API}/dispatch/orders/{part_order[0]}/requeue", json={}, headers=DSP)
     check("6", "A delivered order cannot be moved", r.status_code == 409, r.text[:80])
+    day_list = ok(c.get(f"{API}/dispatch/orders", params={"date": day}, headers=DSP))
+    ids = [o["order_id"] for o in day_list["orders"]]
+    moved_rows = [o for o in day_list["moved_away"] if o["order_id"] == failed_order[0]]
+    check("6", "Orders list: every order of the day once, the failed one shown as moved with the driver's reason",
+          len(ids) == len(set(ids)) and failed_order[0] not in ids and bool(moved_rows) and moved_rows[0]["moved_kind"] == "requeued_after_failure",
+          f"{len(ids)} orders on {day}, {len(day_list['moved_away'])} moved away · {moved_rows[0]['moved_reason'] if moved_rows else '-'}")
+    detail = ok(c.get(f"{API}/dispatch/orders/{part_order[0]}", headers=DSP))
+    check("6", "An order opens with its lines and its outlet's delivery window",
+          len(detail["lines"]) == detail["line_count"] > 0 and detail["outlet"] is not None and detail["delivery_outcome"] == "delivered_in_part",
+          f"{part_order[1]}: {len(detail['lines'])} lines, windows {detail['outlet']['windows']}")
 
     print("\n7 · STORE MANAGERS CONFIRM WHAT ARRIVED")
     so = ok(c.get(f"{API}/store/orders", headers=STORE["OUT077"]))

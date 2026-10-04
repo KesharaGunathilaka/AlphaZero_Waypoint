@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.dependencies import CurrentUser, DbSession, require_roles
@@ -415,12 +415,65 @@ async def reply_to_flag(flag_id: UUID, body: ReplyIn, user: Dispatcher, db: DbSe
     return {"instruction_id": instruction}
 
 
+# One row per order. A trip or delivery result counts only when it belongs to the order's current delivery
+# day: after a failed delivery is moved on, the old attempt shows as failed_before, not as where it is now.
+_ORDER_ROW = """
+    SELECT * FROM (
+      SELECT DISTINCT ON (b.order_id)
+             b.order_id, b.confirmation_no, b.status, b.temp, b.delivery_date, b.deferral_count, b.original_delivery_date,
+             b.source, b.placed_at, b.outlet_id, b.outlet_code, b.outlet_name, b.depot_id, b.van_only, b.unload,
+             b.brand_code, b.brand_name, di.name AS district, b.weight_kg, b.volume_m3, b.line_count,
+             CASE WHEN c.cur THEN b.route_id END AS route_id, CASE WHEN c.cur THEN b.route_seq END AS route_seq,
+             CASE WHEN c.cur THEN b.stop_seq END AS stop_seq, CASE WHEN c.cur THEN b.planned_arrival END AS planned_arrival,
+             CASE WHEN c.cur THEN v.source_id END AS vehicle,
+             CASE WHEN c.cur THEN cd.outcome END AS delivery_outcome, CASE WHEN c.cur THEN cd.device_time END AS delivered_at,
+             b.receipt_at, b.receipt_ok, rc.label AS draft_reason,
+             EXISTS (SELECT 1 FROM current_delivery f WHERE f.order_id = b.order_id AND f.outcome = 'not_delivered'
+                       AND (NOT c.cur OR f.stop_id IS DISTINCT FROM b.stop_id)) AS failed_before
+      FROM order_board b JOIN district di ON di.district_id = b.district_id
+      LEFT JOIN vehicle v ON v.vehicle_id = b.vehicle_id
+      LEFT JOIN reason_code rc ON rc.scope = 'deferral' AND rc.code = b.draft_defer_reason
+      CROSS JOIN LATERAL (SELECT COALESCE((b.planned_arrival AT TIME ZONE 'Asia/Colombo')::date = b.delivery_date, true) AS cur) c
+      LEFT JOIN LATERAL (SELECT d.outcome, d.device_time FROM current_delivery d
+                         WHERE d.order_id = b.order_id AND d.stop_id = b.stop_id ORDER BY d.device_time DESC LIMIT 1) cd ON true
+      ORDER BY b.order_id, b.planned_arrival DESC NULLS LAST
+    ) x"""
+
+
+@router.get("/orders")
+async def day_orders(user: Dispatcher, db: DbSession, day: Annotated[date, Query(alias="date")]):
+    """Every order of the depot's delivery day, where it is now, and the orders moved away from that day."""
+    depot = _depot(user)
+    return {
+        "date": day,
+        "orders": await rows(db, _ORDER_ROW + " WHERE x.depot_id = :d AND x.delivery_date = :day ORDER BY x.outlet_code, x.temp",
+                             {"d": depot, "day": day}),
+        "moved_away": await rows(db, """
+            SELECT o.*, d.to_date, d.kind AS moved_kind, rc.label AS moved_reason, d.note AS moved_note
+            FROM deferral d JOIN (""" + _ORDER_ROW + """) o ON o.order_id = d.order_id
+            JOIN reason_code rc ON rc.scope = d.scope AND rc.code = d.reason_code
+            WHERE d.from_date = :day AND o.depot_id = :d ORDER BY o.outlet_code""", {"d": depot, "day": day}),
+    }
+
+
 @router.get("/orders/{order_id}")
 async def order_record(order_id: int, user: Dispatcher, db: DbSession):
-    """One order's full record: status trail, deferrals, delivery proof and the outlet's last runs."""
-    order = await one(db, "SELECT * FROM order_board WHERE order_id = :o", {"o": order_id})
+    """One order's full record: what is in it, its outlet, where it is now, status trail, deferrals, proof and runs."""
+    order = await one(db, _ORDER_ROW + " WHERE x.order_id = :o", {"o": order_id})
     if order is None:
         raise not_found("Order")
+    order["lines"] = await rows(db, """
+        SELECT l.line_no, p.sku, p.name, p.unit, l.qty, round(l.qty * p.unit_weight_kg, 2) AS kg,
+               round(l.qty * p.unit_volume_m3, 3) AS m3, p.fragile, p.high_value
+        FROM order_line l JOIN product p ON p.product_id = l.product_id WHERE l.order_id = :o ORDER BY l.line_no""",
+        {"o": order_id})
+    order["outlet"] = await one(db, """
+        SELECT ou.address, ou.access_note, ou.gate_contact_name, dp.name AS depot,
+               (SELECT jsonb_agg(jsonb_build_object('kind', w.kind, 'opens', w.opens, 'closes', w.closes) ORDER BY w.kind, w.opens)
+                  FROM outlet_window w WHERE w.outlet_id = ou.outlet_id
+                   AND w.isodow = EXTRACT(isodow FROM CAST(:day AS date))) AS windows
+        FROM outlet ou JOIN depot dp ON dp.depot_id = ou.depot_id WHERE ou.outlet_id = :ou""",
+        {"ou": order["outlet_id"], "day": order["delivery_date"]})
     order["timeline"] = await rows(db, "SELECT * FROM order_timeline WHERE order_id = :o ORDER BY history_id", {"o": order_id})
     order["deferrals"] = await rows(db, """
         SELECT d.from_date, d.to_date, rc.label AS reason, d.note, d.consecutive_skip, u.name AS decided_by, d.decided_at

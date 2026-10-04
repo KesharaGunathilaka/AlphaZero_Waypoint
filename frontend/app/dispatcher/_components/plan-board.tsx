@@ -9,6 +9,7 @@ import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND, BRAND_NAME, quickBlock, type BrandCode, type PlanView, type Route, type Run, type Vehicle } from "./data";
 import { DayProgress } from "./day-progress";
+import { OrderLink } from "./order-panel";
 import type { PlanActions, Tab } from "./dispatcher-app";
 
 const FILTERS = ["All", "Fresh", "Style", "Tech", "Chilled", "Vans"] as const;
@@ -163,6 +164,7 @@ export function PlanBoard({
               <span key={u.order_id} className="inline-flex items-center gap-2 rounded-md border border-wp-border bg-wp-surface px-2 py-1">
                 <BrandMonogram brand={BRAND[u.brand_code]} outlet={u.outlet_code} />
                 <span className="text-[12px] text-wp-text-2">{u.temp === "chilled" ? "❄ " : ""}{Number(u.weight_kg)} kg · {u.suggested_label ?? u.drafted_reason}</span>
+                <OrderLink orderId={u.order_id} className="text-[12px]">Details</OrderLink>
                 {!released && (
                   <button type="button" className="cursor-pointer text-[12px] font-semibold text-wp-focus underline"
                           onClick={() => setMoving({ order_id: u.order_id, label: `${u.outlet_code} ${u.temp}`, temp: u.temp, van_only: u.van_only,
@@ -252,7 +254,9 @@ export function PlanBoard({
                         <span className="ml-auto flex flex-wrap gap-1.5">
                           {(st.orders ?? []).map((o) => (
                             <span key={o.order_id} className="inline-flex items-center gap-1.5 rounded border border-wp-border px-1.5 py-0.5 text-[12px]">
-                              {o.temp === "chilled" ? "❄ Chilled" : "Dry"} · {Number(o.kg)} kg
+                              <OrderLink orderId={o.order_id} className="font-normal text-wp-text no-underline hover:underline">
+                                {o.temp === "chilled" ? "❄ Chilled" : "Dry"} · {Number(o.kg)} kg
+                              </OrderLink>
                               {!released && (
                                 <button type="button" className="cursor-pointer font-semibold text-wp-focus underline"
                                         onClick={() => setMoving({ order_id: o.order_id, label: `${st.outlet_code} ${o.temp}`, temp: o.temp, van_only: st.van_only,

@@ -257,9 +257,63 @@ export type Ledger = {
   per_day: { day: string; is_working: boolean; deferred: number | null }[];
 };
 
-export type OrderRecord = {
+/** One order and where it is now (GET /dispatch/orders?date= rows; also the head of an OrderRecord). */
+export type OrderRow = {
   order_id: number;
   confirmation_no: string;
+  status: string;
+  temp: "ambient" | "chilled";
+  delivery_date: string;
+  deferral_count: number;
+  original_delivery_date: string;
+  source: "store" | "dispatcher";
+  placed_at: string;
+  outlet_id: number;
+  outlet_code: string;
+  outlet_name: string;
+  van_only: boolean;
+  unload: string;
+  brand_code: BrandCode;
+  brand_name: string;
+  district: string;
+  weight_kg: number;
+  volume_m3: number;
+  line_count: number;
+  route_id: number | null;
+  route_seq: number | null;
+  stop_seq: number | null;
+  planned_arrival: string | null;
+  vehicle: string | null;
+  delivery_outcome: "delivered" | "delivered_in_part" | "not_delivered" | null;
+  delivered_at: string | null;
+  receipt_at: string | null;
+  receipt_ok: boolean | null;
+  draft_reason: string | null;
+  /** An earlier delivery attempt failed and the order was moved to this day. */
+  failed_before: boolean;
+};
+/** An order moved off the day: deferred by the dispatcher, or requeued after a failed delivery. */
+export type MovedOrder = OrderRow & {
+  to_date: string;
+  moved_kind: "deferred" | "requeued_after_failure";
+  moved_reason: string;
+  moved_note: string | null;
+};
+export type DayOrders = { date: string; orders: OrderRow[]; moved_away: MovedOrder[] };
+
+export type OrderLine = { line_no: number; sku: string; name: string; unit: string; qty: number; kg: number; m3: number; fragile: boolean; high_value: boolean };
+
+export type OrderRecord = Partial<OrderRow> & {
+  order_id: number;
+  confirmation_no: string;
+  lines?: OrderLine[];
+  outlet?: {
+    address: string | null;
+    access_note: string | null;
+    gate_contact_name: string | null;
+    depot: string;
+    windows: { kind: "delivery" | "mall_access"; opens: string; closes: string }[] | null;
+  } | null;
   timeline: { to_status: string; at: string; note: string | null }[];
   deferrals: { from_date: string; to_date: string; reason: string; note: string | null; decided_by: string; decided_at: string }[];
   notices: { kind: string; title: string; created_at: string; read_at: string | null }[];

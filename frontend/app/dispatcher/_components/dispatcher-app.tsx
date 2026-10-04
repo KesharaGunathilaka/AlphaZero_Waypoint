@@ -12,12 +12,15 @@ import { cn } from "@/lib/utils";
 import type { Depots, Me, PlanView, Runs, Violation } from "./data";
 import { Deferrals } from "./deferrals";
 import { Ledger } from "./ledger";
+import { OrderPanelProvider } from "./order-panel";
+import { Orders } from "./orders";
 import { LiveMonitor } from "./live-monitor";
 import { PlanBoard } from "./plan-board";
 
-/** Plain names, in the order of the dispatcher's day: plan it, settle what can't go, watch it run, look back. */
+/** Plain names, in the order of the dispatcher's day: plan it, check any order, settle what can't go, watch it run, look back. */
 const TABS = [
   ["plan", "Plan"],
+  ["orders", "Orders"],
   ["deferrals", "Deferred"],
   ["live", "Live"],
   ["ledger", "Records"],
@@ -149,6 +152,7 @@ export function DispatcherApp() {
   // Live is watched on a large display all day: it uses the full width; planning keeps a readable width.
   const width = tab === "live" ? "max-w-[2200px]" : "max-w-[1440px]";
   return (
+    <OrderPanelProvider>
     <div className="min-h-screen bg-wp-canvas text-[13px] leading-[18px] text-wp-text tabular-nums">
       <header className="sticky top-0 z-30 border-b border-wp-border bg-wp-surface">
         <div className={cn("mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6", width)}>
@@ -165,7 +169,7 @@ export function DispatcherApp() {
           )}
           <div className="hidden text-[11px] leading-4 text-wp-text-2 lg:block">{me.data?.name}</div>
           <div className="ml-auto flex items-center gap-2">
-            {(tab === "plan" || tab === "deferrals") && dates.length > 0 && (
+            {(tab === "plan" || tab === "orders" || tab === "deferrals") && dates.length > 0 && (
               <Select aria-label="Delivery day" value={date ?? ""} onChange={(e) => setChosenDate(e.target.value)} className="h-9 text-[13px]">
                 {dates.map((d) => (
                   <option key={d} value={d}>
@@ -228,6 +232,7 @@ export function DispatcherApp() {
         <PlanBoard date={date} run={run} plan={plan.data ?? null} loading={plan.loading || runs.loading} busy={busy}
                    actions={actions} onTab={setTab} moveRequest={moveRequest} onMoveRequestHandled={() => setMoveRequest(null)} />
       )}
+      {tab === "orders" && <Orders key={`${depotKey}-${date}`} date={date} />}
       {tab === "deferrals" && (
         <Deferrals date={date} plan={plan.data ?? null} busy={busy} actions={actions}
                    onTryToFit={(orderId) => { setMoveRequest(orderId); setTab("plan"); }} onTab={setTab} />
@@ -235,5 +240,6 @@ export function DispatcherApp() {
       {tab === "live" && <LiveMonitor key={depotKey} />}
       {tab === "ledger" && <Ledger key={depotKey} />}
     </div>
+    </OrderPanelProvider>
   );
 }

@@ -9,6 +9,7 @@ import { useApiData } from "@/lib/api/use-api";
 import { formatDay, formatDayTime, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND, historyGlyphs, type BrandCode, type Ledger as LedgerData, type LedgerRecord, type OrderRecord } from "./data";
+import { OrderLink, orderEvents } from "./order-panel";
 
 const withIssue = (r: LedgerRecord) =>
   r.record_type === "delivery" && (r.outcome !== "delivered" || r.disputed || r.awaiting_store || r.proof_complete === false);
@@ -159,17 +160,15 @@ function OrderTrail({ orderId }: { orderId: number }) {
   const record = useApiData<OrderRecord>(`/dispatch/orders/${orderId}`);
   if (!record.data) return <div className="mb-2 rounded-lg bg-wp-canvas p-4 text-wp-text-2">{record.error ?? "Loading the record…"}</div>;
   const o = record.data;
-  const events: [string, string][] = [
-    ...o.timeline.map((t): [string, string] => [t.at, `Status: ${t.to_status.replaceAll("_", " ")}${t.note ? ` (${t.note})` : ""}`]),
-    ...o.deferrals.map((d): [string, string] => [d.decided_at,
-      `Deferred by ${d.decided_by}: ${d.reason}${d.note ? `. Note: ${d.note}` : ""}. Moved ${formatDay(d.from_date)} → ${formatDay(d.to_date)}`]),
-    ...o.notices.map((n): [string, string] => [n.created_at, `Store told: ${n.title}${n.read_at ? ` · read ${formatTime(n.read_at)}` : " · not read yet"}`]),
-  ].sort((a, b) => a[0].localeCompare(b[0]));
+  const events = orderEvents(o);
 
   return (
     <div className="mb-2 grid grid-cols-1 gap-6 rounded-lg bg-wp-canvas p-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       <div>
-        <Eyebrow className="mb-2">Event timeline</Eyebrow>
+        <div className="mb-2 flex items-center gap-3">
+          <Eyebrow>Event timeline</Eyebrow>
+          <OrderLink orderId={orderId} className="text-[12px]">Open the full order (items, outlet, trip)</OrderLink>
+        </div>
         {events.map(([time, text], i) => (
           <div key={i} className="flex gap-3 py-1">
             <span className="w-24 flex-none text-wp-text-2">{formatDayTime(time)}</span>

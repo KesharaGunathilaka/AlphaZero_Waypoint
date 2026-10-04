@@ -8,6 +8,7 @@ import { formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND, historyGlyphs, type PlanView, type Unplanned } from "./data";
 import type { PlanActions, Tab } from "./dispatcher-app";
+import { OrderLink } from "./order-panel";
 
 /**
  * Deferred: the orders that cannot go on this run. The engine already picked a reason for each one;
@@ -124,7 +125,7 @@ export function Deferrals({
               <div className="text-[12px] text-wp-text-2">
                 <span className="font-semibold text-wp-text">{o.temp === "chilled" ? "❄ Chilled" : "Dry"}</span> · {Number(o.weight_kg)} kg ·{" "}
                 {Number(o.volume_m3)} m³
-                <div className="text-[11px] text-wp-muted">{o.confirmation_no}</div>
+                <div><OrderLink orderId={o.order_id} className="text-[11px]">{o.confirmation_no} · details</OrderLink></div>
               </div>
               <div>
                 {o.history?.length ? <RunHistory history={historyGlyphs(o.history)} /> : <span className="text-[12px] text-wp-muted">No history</span>}
