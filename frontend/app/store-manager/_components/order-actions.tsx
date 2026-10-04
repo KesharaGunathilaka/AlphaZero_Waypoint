@@ -20,14 +20,16 @@ export function ChangeOrderAction({
   className?: string;
 }) {
   const open = order.status === "placed";
+  // A locked order shows why in words, not as a grey button that does nothing.
+  if (!open) {
+    return <div className={cn("text-xs text-wp-muted", className)}>🔒 Locked at the cutoff · call dispatch to change it</div>;
+  }
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1", className)}>
-      <Button variant="secondary" className={storeLayout.button} disabled={!open} onClick={() => onChangeOrder(order)}>
+      <Button variant="secondary" className={storeLayout.button} onClick={() => onChangeOrder(order)}>
         Change order
       </Button>
-      <span className="text-xs text-wp-muted">
-        {open ? "Open until the 16:00 cutoff" : "Closed: on the van plan, call dispatch to move it"}
-      </span>
+      <span className="text-xs text-wp-muted">Open until the 16:00 cutoff</span>
     </div>
   );
 }

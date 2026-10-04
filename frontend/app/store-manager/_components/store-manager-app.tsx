@@ -1,25 +1,27 @@
 "use client";
 
+import { CheckSquare, ClipboardList, ShoppingCart } from "lucide-react";
 import { useState } from "react";
+import { AccountButton } from "@/components/waypoint/account-button";
 import { BrandMonogram } from "@/components/waypoint/data";
 import { Logo } from "@/components/waypoint/logo";
-import { ScreenSwitcher } from "@/components/waypoint/screen-switcher";
 import { Banner, SyncIndicator } from "@/components/waypoint/status";
 import { useApiData } from "@/lib/api/use-api";
-import { formatTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { ConfirmDelivery, type Receipt } from "./confirm-delivery";
 import { BRAND, type Outlet, type StoreOrder, type Temp } from "./data";
 import { Deliveries } from "./deliveries";
 import { OrderDetail } from "./order-detail";
 import { PlaceOrder } from "./place-order";
 
-const SCREENS = [
-  ["deliveries", "Deliveries"],
-  ["order", "Place order"],
-  ["detail", "Order detail"],
-  ["confirm", "Confirm delivery"],
+export type StoreScreen = "deliveries" | "order" | "detail" | "confirm";
+
+/** Three things a store manager does: see what is coming, order, confirm what arrived. Order detail opens from a delivery. */
+const NAV = [
+  { key: "deliveries", label: "Deliveries", Icon: ClipboardList },
+  { key: "order", label: "Order", Icon: ShoppingCart },
+  { key: "confirm", label: "Confirm", Icon: CheckSquare },
 ] as const;
-export type StoreScreen = (typeof SCREENS)[number][0];
 
 /** What the order screen is doing: a new order of one temperature class, or changing an existing one. */
 export type OrderIntent = { temp: Temp; editing: StoreOrder | null };
@@ -64,39 +66,46 @@ export function StoreManagerApp() {
     await orders.reload();
   }
 
+  const toConfirm = list.filter((o) => o.needs_receipt).length;
+  const active = screen === "detail" ? "deliveries" : screen;
+
   return (
-    <div className="flex min-h-screen flex-col bg-wp-surface-2 p-3 text-[13px] leading-[18px] text-wp-text md:p-4">
-      <div className="mx-auto flex w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas md:rounded-lg">
-        <header className="flex min-h-14 flex-wrap items-center gap-x-4 border-b border-wp-border bg-wp-surface px-4 md:px-6">
-          <div className="flex items-center gap-3 py-3 md:py-0">
+    <div className="flex min-h-screen flex-col bg-wp-surface-2 text-[13px] leading-[18px] text-wp-text md:p-4">
+      <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col bg-wp-canvas md:flex-none md:overflow-hidden md:rounded-lg md:border md:border-wp-border">
+        <header className="sticky top-0 z-20 flex min-h-14 items-center gap-x-4 border-b border-wp-border bg-wp-surface px-4 md:static md:px-6">
+          <div className="flex min-w-0 items-center gap-3 py-2">
             <Logo className="h-6 md:h-7" />
             {outlet.data && (
-              <span className="flex items-center gap-2 text-xs text-wp-text-2">
+              <span className="truncate text-xs text-wp-text-2">
                 <BrandMonogram brand={BRAND[outlet.data.brand_code]} outlet={`${outlet.data.district} ${outlet.data.code}`} />
               </span>
             )}
           </div>
 
-          <ScreenSwitcher
-            screens={SCREENS}
-            current={screen}
-            onChange={goTo}
-            variant="inline"
-            className="order-last w-full self-stretch border-t border-wp-border md:order-none md:w-auto md:min-w-0 md:flex-1 md:border-t-0"
-          />
+          <nav aria-label="Store sections" className="hidden h-14 items-stretch gap-1 md:flex">
+            {NAV.map(({ key, label }) => (
+              <button key={key} type="button" onClick={() => goTo(key)} aria-current={active === key ? "page" : undefined}
+                      className={cn("flex cursor-pointer items-center gap-2 border-b-[3px] px-3 text-[14px] font-semibold",
+                                    active === key ? "border-wp-action text-wp-action" : "border-transparent text-wp-text-2 hover:text-wp-text")}>
+                {label}
+                {key === "confirm" && toConfirm > 0 && <span className="rounded-full bg-wp-warn-tint px-2 text-[11px] text-wp-warn">{toConfirm}</span>}
+              </button>
+            ))}
+          </nav>
 
-          <div className="ml-auto flex items-center gap-4 py-3 md:py-0">
-            {orders.error ? (
-              <SyncIndicator state="retrying">Can’t reach Waypoint</SyncIndicator>
-            ) : (
-              <SyncIndicator state={orders.loading ? "sending" : "synced"}>
-                {orders.loading ? "Updating…" : `Updated ${formatTime(new Date())}`}
-              </SyncIndicator>
-            )}
+          <div className="ml-auto flex items-center gap-3">
+            <span className="hidden sm:inline">
+              {orders.error ? (
+                <SyncIndicator state="retrying">Can’t reach Waypoint</SyncIndicator>
+              ) : (
+                <SyncIndicator state={orders.loading ? "sending" : "synced"}>{orders.loading ? "Updating…" : "Up to date"}</SyncIndicator>
+              )}
+            </span>
+            <AccountButton />
           </div>
         </header>
 
-        <main className="flex flex-col gap-6 px-4 pt-6 pb-16 md:px-6 md:pb-12">
+        <main className="flex flex-col gap-6 px-4 pt-5 pb-24 md:px-6 md:pt-6 md:pb-12">
           {(outlet.error || (orders.error && !orders.data)) && (
             <Banner state="crit" action="Try again" onAction={() => { void outlet.reload(); void orders.reload(); }}>
               {outlet.error ?? orders.error}
@@ -156,6 +165,22 @@ export function StoreManagerApp() {
           )}
         </main>
       </div>
+
+      {/* Phone: the three sections sit under the thumb. */}
+      <nav aria-label="Store sections" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-3 border-t border-wp-border bg-wp-surface pb-[env(safe-area-inset-bottom)] md:hidden">
+        {NAV.map(({ key, label, Icon }) => (
+          <button key={key} type="button" onClick={() => goTo(key)} aria-current={active === key ? "page" : undefined}
+                  className={cn("relative flex h-16 cursor-pointer flex-col items-center justify-center gap-1 text-[12px] font-semibold",
+                                active === key ? "text-wp-action" : "text-wp-text-2")}>
+            <Icon aria-hidden className="size-6" />
+            {label}
+            {key === "confirm" && toConfirm > 0 && (
+              <span className="absolute top-2 right-[calc(50%-22px)] rounded-full bg-wp-crit px-1.5 text-[11px] leading-4 text-white">{toConfirm}</span>
+            )}
+            {active === key && <span className="absolute inset-x-6 top-0 h-[3px] rounded-b bg-wp-action" />}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
