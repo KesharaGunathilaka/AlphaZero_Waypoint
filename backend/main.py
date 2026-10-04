@@ -1,6 +1,4 @@
-def main():
-    print("Hello from waypoint-api!")
+"""Entrypoint for hosts that look for `main:app` (Vercel's FastAPI runtime, `uvicorn main:app`)."""
+from app.main import app
 
-
-if __name__ == "__main__":
-    main()
+__all__ = ["app"]

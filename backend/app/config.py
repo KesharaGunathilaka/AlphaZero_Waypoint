@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # App
-    APP_NAME: str = "MedStudent.lk Backend"
+    APP_NAME: str = "Waypoint API"
     ENVIRONMENT: Literal["development", "production"] = "production"
     DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
@@ -90,7 +90,6 @@ class Settings(BaseSettings):
     URL_SIGNING_SECRET: SecretStr = SecretStr("")
     PUBLIC_API_URL: str = "http://localhost:8000"  # how browsers reach this API (image links)
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
-    CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 
     @model_validator(mode="after")
     def _validate_security(self) -> Self:

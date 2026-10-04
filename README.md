@@ -19,10 +19,10 @@ Why each screen looks the way it does, with screenshots from a full run: [docs/u
 Needs Docker Desktop. Nothing else: the database, the seed data and the sign-in are all inside.
 
 ```bash
-cp .env.example .env
 docker compose up --build
 ```
 
+No `.env` is needed; copy `.env.example` to `.env` only to change ports or passwords.
 Open **http://localhost:3000** (or the `WEB_PORT` in `.env`). First start loads the schema, the seven
 CSVs from `data/general/` and a demo delivery day; it takes about a minute.
 
@@ -135,12 +135,12 @@ Frontend: `cd frontend && pnpm lint && npx tsc --noEmit`.
 | Part | Where | Settings |
 |---|---|---|
 | Database | Neon (PostgreSQL 18) | `./db/load.sh "$NEON_DATABASE_URL"` once; `--migrate` after schema changes |
-| Photos | Neon object storage (S3 API) | `STORAGE_BACKEND=s3`, `AWS_*` from `.env.aws` |
-| API | Vercel (FastAPI) | `DATABASE_URL` (pooled), `AUTH_MODE=clerk`, `CLERK_*`, `CORS_ORIGINS`, `ALLOWED_HOSTS` |
-| Web | Vercel (Next.js) | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_AUTH_MODE=clerk`, Clerk keys |
+| Photos | Neon object storage (S3 API) | in the API's variables |
+| API | Vercel, Root Directory `backend` | [`backend/.env.production.example`](backend/.env.production.example) |
+| Web | Vercel, Root Directory `frontend` | [`frontend/.env.production.example`](frontend/.env.production.example) |
+| Sign-in | Clerk organization, roles `dispatcher` · `loader` · `driver` · `store_manager` | users with the demo e-mails above |
 
-With Clerk, create users with the demo e-mail addresses above; the API links a Clerk sign-in to its
-Waypoint account by e-mail on first use. Roles come from the Waypoint database, not from Clerk.
+Step by step, with the checks after each deployment: [docs/deploy.md](docs/deploy.md).
 
 ## Repository
 
@@ -149,8 +149,8 @@ backend/    FastAPI API, allocation engine, local sign-in, tests
 frontend/   Next.js 16 app: /dispatcher, /loader, /driver, /store-manager
 db/         schema, CSV import, migrations, demo seed, load.sh (Neon)
 data/general/   the seven General Data CSVs (the only competition data in the repo)
-docs/       database, API, UX by role (+ screenshots)
-docker-compose.yml, .env.example
+docs/       deploy guide, database, API, UX by role (+ screenshots)
+docker-compose.yml, .env.example   Docker delivery (docker compose up)
 ```
 
 ## AI assistance

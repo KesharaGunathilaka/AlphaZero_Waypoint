@@ -8,6 +8,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 
@@ -88,4 +89,5 @@ desktop.ini
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
-.claude/settings.local.json
+# Claude Code local tool settings (launch configs, permissions)
+.claude/
