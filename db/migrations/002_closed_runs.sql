@@ -35,3 +35,22 @@ BEGIN
   END LOOP;
   RAISE EXCEPTION 'WP900: no open service date in the next 30 days';
 END $$;
+
+-- The order form names the run that has just closed: the operating day before the one now offered
+-- (after an early close of Tuesday, an order for Wednesday says "the Tue 6 Oct run has closed").
+CREATE OR REPLACE FUNCTION order_slot(p_outlet integer, p_temp temp_class)
+RETURNS TABLE (delivery_date date, cutoff_at timestamptz, closes_in interval, closed_date date,
+               joins_later_run boolean, existing_order_id bigint, existing_status order_status)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = wp, pg_temp AS $$
+DECLARE d date; dep smallint; c date;
+BEGIN
+  IF NOT wp.can_see_outlet(p_outlet) THEN RETURN; END IF;
+  SELECT depot_id INTO dep FROM wp.outlet WHERE outlet_id = p_outlet;
+  c := wp.next_delivery_date(p_outlet, p_temp, current_date, now(), false);   -- first scheduled day, cutoff ignored
+  d := wp.next_delivery_date(p_outlet, p_temp, current_date, now(), true);    -- first day still open
+  delivery_date := d; cutoff_at := wp.run_cutoff(dep, d); closes_in := cutoff_at - now();
+  closed_date := CASE WHEN c <> d THEN wp.previous_working_day(d) END; joins_later_run := (c <> d);
+  SELECT h.order_id, h.status INTO existing_order_id, existing_status FROM wp.order_header h
+   WHERE h.outlet_id = p_outlet AND h.delivery_date = d AND h.temp = p_temp AND h.deferral_count = 0 AND h.status <> 'not_delivered';
+  RETURN NEXT;
+END $$;

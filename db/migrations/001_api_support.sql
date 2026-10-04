@@ -106,6 +106,11 @@ BEGIN
     ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060'),
     ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL),
     ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL),
+    -- Outlets the demo day leaves without an order, so each category can be ordered live:
+    ('store_manager', 'Ishara Wijesinghe', 'store.out102@example.com',   'OUT102', NULL),   -- Style, Matale (Kandy)
+    ('store_manager', 'Chamara Dissanayake', 'store.out103@example.com', 'OUT103', NULL),   -- Tech, Matale (Kandy)
+    ('store_manager', 'Nadeesha Perera',   'store.out018@example.com',   'OUT018', NULL),   -- Style, Colombo mall (Peliyagoda)
+    ('store_manager', 'Ravindu Silva',     'store.out022@example.com',   'OUT022', NULL),   -- Tech, Colombo mall (Peliyagoda)
     ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL)
   ) AS v(role, name, email, outlet, vehicle)
   ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = EXCLUDED.name, depot_id = EXCLUDED.depot_id,

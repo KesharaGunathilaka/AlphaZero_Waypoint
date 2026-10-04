@@ -23,7 +23,7 @@ const ROLE_LABEL: Record<string, string> = {
 function detail(a: DemoAccount): string {
   if (a.outlet) return `Outlet ${a.outlet}`;
   if (a.vehicle) return `Vehicle ${a.vehicle}`;
-  if (a.depot) return `${a.depot} depot`;
+  if (a.depot) return a.depot.includes(" and ") ? `${a.depot} depots` : `${a.depot} depot`;
   return "Every role's app";
 }
 
