@@ -36,7 +36,7 @@ COLOMBO = timezone(timedelta(hours=5, minutes=30))
 BRAND = {"Fresh": "F", "Style": "S", "Tech": "T"}
 FRESH_BUDGET, DAY_BUDGET, FRESH_START = 270, 480, time(3, 30)
 API = "/api/v1"
-KANDY_DSP = {"X-Dev-User": "dispatcher@waypoint.demo"}
+KANDY_DSP = {"X-Dev-User": "dispatcher@example.com"}
 PEL_DSP = {"X-Dev-User": "dispatcher.peliyagoda@waypoint.test"}
 
 results: list[tuple[str, str, bool, str]] = []  # (part, check, passed, detail)
@@ -319,8 +319,9 @@ def sql(query: str, *args):
     return asyncio.run(run())
 
 
-def seed_peliyagoda_peak():
-    """Every Peliyagoda outlet orders today (Fresh dry + chilled, Style, Tech), heavy volumes."""
+def seed_peliyagoda_peak() -> tuple[int, str]:
+    """Every Peliyagoda outlet orders (Fresh dry + chilled, Style, Tech), heavy volumes, for the open
+    delivery day after the one demo_reset() seeds. Returns (orders, service date)."""
     sql("""INSERT INTO wp.app_user(role, name, email, depot_id) VALUES ('dispatcher', 'Peliyagoda Test', $1, 1)
            ON CONFLICT (email) DO UPDATE SET active = true""", PEL_DSP["X-Dev-User"])
     rng = random.Random(2026)
@@ -338,6 +339,7 @@ def seed_peliyagoda_peak():
           SELECT user_id INTO uid FROM wp.app_user WHERE email = 'dispatcher.peliyagoda@waypoint.test';
           PERFORM set_config('wp.user_id', uid::text, true);
           d := wp.next_open_service_date(1::smallint);
+          d := wp.next_delivery_date((SELECT min(outlet_id) FROM wp.outlet WHERE depot_id = 1), 'ambient', d + 1, now(), true);
           FOR x IN SELECT * FROM jsonb_to_recordset('""" + str([
               {"code": c, "temp": t, "kg": k, "m3": m} for c, t, k, m in plan]).replace("'", '"') + """'::jsonb)
                    AS j(code text, temp text, kg numeric, m3 numeric) LOOP
@@ -348,7 +350,9 @@ def seed_peliyagoda_peak():
                                    x.temp::wp.temp_class, lines, uid, 'dispatcher', d, x.kg, x.m3);
           END LOOP;
         END $$""")
-    return len(plan)
+    day = sql("""SELECT wp.next_delivery_date((SELECT min(outlet_id) FROM wp.outlet WHERE depot_id = 1), 'ambient',
+                                              wp.next_open_service_date(1::smallint) + 1, now(), true) AS d""")[0]["d"]
+    return len(plan), day.isoformat()
 
 
 # ---------------------------------------------------------------------------------- run ----
@@ -373,8 +377,7 @@ with TestClient(app) as c:
 
     # ---------------------------------------------------------------- Part B: Peliyagoda peak
     print("\nPART B - Peliyagoda peak day (all outlets order, 2 reefers in the workshop)")
-    n_orders = seed_peliyagoda_peak()
-    pday = ok(c.get(f"{API}/dispatch/runs", headers=PEL_DSP))["next_open_date"]
+    n_orders, pday = seed_peliyagoda_peak()
     reefers = sql("""SELECT v.vehicle_id, v.source_id FROM wp.vehicle v JOIN wp.vehicle_class c USING (class_id)
                      WHERE v.depot_id = 1 AND c.carries_chilled ORDER BY c.is_van DESC, v.vehicle_id LIMIT 2""")
     for r in reefers:
@@ -387,8 +390,20 @@ with TestClient(app) as c:
     print(f"  {pday}: {closed_p['orders_confirmed']} orders (seeded {n_orders}), workshop: {sorted(workshop_p)}")
     ptrips, pveh, pdef = audit("B", pplan, closed_p["orders_confirmed"], workshop_p)
     avoidable("B", pplan, ptrips, pveh, pdef, workshop_p)
-    check("B", "Kandy dispatcher cannot open a Peliyagoda plan",
+    check("B", "A dispatcher working on Kandy cannot open a Peliyagoda plan",
           c.get(f"{API}/dispatch/plans/{ppid}", headers=KANDY_DSP).status_code == 404)
+    # Planning office: the dispatcher plans both depots by switching; single-depot accounts cannot switch.
+    deps = ok(c.get(f"{API}/dispatch/depots", headers=KANDY_DSP))
+    check("B", "Planning-office dispatcher can choose either depot", len(deps["depots"]) == 2, str([d["name"] for d in deps["depots"]]))
+    ok(c.post(f"{API}/dispatch/depot", json={"depot_id": 1}, headers=KANDY_DSP))
+    check("B", "After switching to Peliyagoda: its plan opens, Kandy's does not",
+          c.get(f"{API}/dispatch/plans/{ppid}", headers=KANDY_DSP).status_code == 200
+          and c.get(f"{API}/dispatch/plans/{kpid}", headers=KANDY_DSP).status_code == 404)
+    ok(c.post(f"{API}/dispatch/depot", json={"depot_id": 2}, headers=KANDY_DSP))
+    r = c.post(f"{API}/dispatch/depot", json={"depot_id": 2}, headers=PEL_DSP)
+    check("B", "A single-depot dispatcher cannot switch depot", r.status_code == 403, f"{r.status_code}")
+    r = c.post(f"{API}/dispatch/depot", json={"depot_id": 1}, headers={"X-Dev-User": "loader.kandy@example.com"})
+    check("B", "A loader cannot switch depot", r.status_code == 403, f"{r.status_code}")
 
     # ---------------------------------------------------------------- Part C: breaking rules
     print("\nPART C - breaking the rules by hand (Kandy plan): each must be refused")
@@ -492,8 +507,8 @@ with TestClient(app) as c:
 
     # ---------------------------------------------------------------- Part D: cutoff, release, records
     print("\nPART D - cutoff, release, deferral record, next run")
-    SM = {"X-Dev-User": "store.out077@waypoint.demo"}
-    SM78 = {"X-Dev-User": "store.out078@waypoint.demo"}
+    SM = {"X-Dev-User": "store.out077@example.com"}
+    SM78 = {"X-Dev-User": "store.out078@example.com"}
     prods = ok(c.get(f"{API}/store/products", params={"temp": "ambient"}, headers=SM))
     slot = ok(c.get(f"{API}/store/order-slot", params={"temp": "ambient"}, headers=SM))
     sd = date.fromisoformat(slot["delivery_date"])

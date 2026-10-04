@@ -43,7 +43,8 @@ async def demo_accounts(db: DbSession):
     """The accounts that can sign in locally, for the sign-in page's "demo accounts" list."""
     _local_only()
     result = await db.execute(text("""
-        SELECT u.email, u.name, u.role::text AS role, ou.code AS outlet, v.source_id AS vehicle, d.name AS depot
+        SELECT u.email, u.name, u.role::text AS role, ou.code AS outlet, v.source_id AS vehicle,
+               CASE WHEN u.all_depots THEN 'Kandy and Peliyagoda' ELSE d.name END AS depot
         FROM wp.app_user u LEFT JOIN wp.outlet ou ON ou.outlet_id = u.outlet_id
         LEFT JOIN wp.vehicle v ON v.vehicle_id = u.vehicle_id LEFT JOIN wp.depot d ON d.depot_id = u.depot_id
         WHERE u.active AND u.password_hash IS NOT NULL

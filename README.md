@@ -41,20 +41,21 @@ tap one to sign in. All use the password **`waypoint-demo`**.
 
 | Account | Role | Scope |
 |---|---|---|
-| `dispatcher@waypoint.demo` | Dispatcher | Kandy depot |
-| `loader.kandy@waypoint.demo` | Loader | Kandy depot |
-| `driver.veh057@waypoint.demo` | Driver | VEH057 (refrigerated van) |
-| `driver.veh059@waypoint.demo`, `driver.veh060@waypoint.demo` | Driver | VEH059, VEH060 (ambient vans) |
-| `store.out077@waypoint.demo`, `store.out078@waypoint.demo` | Store manager | Fresh Kandy OUT077, OUT078 |
-| `admin@waypoint.demo` | Admin | Every role's app (open `/loader`, `/driver`, `/store-manager` directly) |
+| `dispatcher@example.com` | Dispatcher | Both depots: the planning office switches between Kandy and Peliyagoda in the header (starts on Kandy) |
+| `loader.kandy@example.com` | Loader | Kandy depot |
+| `driver.veh057@example.com` | Driver | VEH057 (refrigerated van) |
+| `driver.veh059@example.com`, `driver.veh060@example.com` | Driver | VEH059, VEH060 (ambient vans) |
+| `store.out077@example.com`, `store.out078@example.com` | Store manager | Fresh Kandy OUT077, OUT078 |
+| `admin@example.com` | Admin | Every role's app (open `/loader`, `/driver`, `/store-manager` directly) |
 
 The deployed app uses Clerk for sign-in instead (`AUTH_MODE=clerk`); see [Deploy](#deploy).
 
 ## Walk through a delivery day (about 10 minutes)
 
-The demo day is **the next open delivery day for Kandy**: 70 orders across Fresh (dry and chilled),
-Style and Tech, including the Day 5 worked example (seven van-only chilled orders, 2,290 kg, against one
-refrigerated van with VEH058 in the workshop).
+The demo day is **the next open delivery day**: 70 Kandy orders across Fresh (dry and chilled), Style
+and Tech, including the Day 5 worked example (seven van-only chilled orders, 2,290 kg, against one
+refrigerated van with VEH058 in the workshop), and 114 Peliyagoda orders. The walkthrough follows Kandy;
+the dispatcher switches to Peliyagoda with the depot selector in the header.
 
 1. **Store manager** (`store.out077`) → *Order* → place the dry-groceries order (the usual order is
    pre-filled). Note the cutoff: 16:00 the working day before.
@@ -88,6 +89,7 @@ A plan that breaks a rule cannot be sent; a manual move that breaks one is refus
 | Rule | |
 |---|---|
 | One brand and one district per trip; whole orders; at most two trips per vehicle | ✓ |
+| Home depot only (a dispatcher plans one depot at a time; loaders and drivers see only their own) | ✓ |
 | Weight **and** volume per trip | ✓ |
 | Chilled only on refrigerated vehicles; van-only outlets only by vans; home depot only | ✓ |
 | Trip minutes = outbound + inter-stop × (orders − 1) + service allowance | ✓ |
@@ -109,11 +111,11 @@ ENVIRONMENT=development AUTH_DEV_BYPASS=true ALLOWED_HOSTS='["testserver"]' PUBL
 DATABASE_URL="postgresql://waypoint:waypoint@localhost:5433/waypoint?sslmode=disable" uv run python tests/rules_audit.py
 ```
 
-- `tests/rules_audit.py`: **112 checks**. Recomputes every booklet rule from the CSVs (not from the
+- `tests/rules_audit.py`: **116 checks**. Recomputes every booklet rule from the CSVs (not from the
   database) for the Kandy demo day, a Peliyagoda peak day (all 75 outlets order, two refrigerated
   vehicles in the workshop) and the next day's run; searches for any avoidable deferral; tries every
   way of breaking a rule by hand through the API (each must be refused); checks the cutoff, release,
-  deferral records and store notices.
+  deferral records, store notices and depot switching.
 - `tests/walkthrough.py`: the four roles end to end through the API, including offline sync,
   idempotent resends, corrections and photo links.
 

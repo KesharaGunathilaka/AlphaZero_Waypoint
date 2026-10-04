@@ -209,6 +209,7 @@ export function PlanBoard({
           return (
             <div key={r.route_id} className="border-b border-wp-border last:border-b-0">
               <button type="button" onClick={() => toggle(r.route_id)} aria-expanded={isOpen}
+                      aria-label={`${v?.source_id ?? r.vehicle_code} trip ${r.route_seq}, ${BRAND_NAME[r.brand_code]} ${r.district_name}, ${r.stops.length} stops, load ${load}%`}
                       className={cn(ROW, "flex w-full cursor-pointer flex-col gap-1 px-3 py-2.5 text-left hover:bg-wp-surface-2/60", isOpen && "bg-wp-surface-2/60")}>
                 <div className="flex w-full items-center justify-between gap-2 md:block">
                   <div>

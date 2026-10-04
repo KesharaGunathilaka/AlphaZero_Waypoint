@@ -46,7 +46,7 @@ class SyncIn(BaseModel):
 async def me(user: CurrentUserDep, db: DbSession):
     """Who is signed in, their role and where they work."""
     return await one(db, """
-        SELECT u.user_id, u.role, u.name, u.email, dp.name AS depot, o.code AS outlet_code, o.name AS outlet_name,
+        SELECT u.user_id, u.role, u.name, u.email, dp.name AS depot, u.all_depots, o.code AS outlet_code, o.name AS outlet_name,
                v.source_id AS vehicle_source_id, v.code AS vehicle_code
         FROM app_user u LEFT JOIN depot dp ON dp.depot_id = u.depot_id LEFT JOIN outlet o ON o.outlet_id = u.outlet_id
         LEFT JOIN vehicle v ON v.vehicle_id = u.vehicle_id WHERE u.user_id = :u""", {"u": user.user_id})

@@ -4,6 +4,7 @@
 --   * attachment_blob       photo and signature bytes (attachment keeps key, size, hash)
 --   * demo_reset()          products, role accounts and one demo delivery day (Kandy depot)
 --   * pgcrypto              password hashes for the local sign-in (Docker; the deployed app uses Clerk)
+--   * app_user.all_depots   a planning-office dispatcher may switch between depots
 -- =============================================================================
 SET search_path = wp, public;
 
@@ -11,6 +12,12 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 ALTER TABLE app_user ADD COLUMN IF NOT EXISTS vehicle_id integer REFERENCES vehicle;
 CREATE UNIQUE INDEX IF NOT EXISTS app_user_vehicle_uq ON app_user (vehicle_id) WHERE vehicle_id IS NOT NULL;
+
+-- Booklet: the dispatcher works in one planning office and plans both depots. A dispatcher with
+-- all_depots may switch the depot they are working on (app_user.depot_id); every depot rule and view
+-- keeps reading depot_id, so nothing else changes. Loaders and drivers stay on their own depot.
+ALTER TABLE app_user ADD COLUMN IF NOT EXISTS all_depots boolean NOT NULL DEFAULT false;
+UPDATE app_user SET all_depots = true WHERE email = 'dispatcher@example.com' AND NOT all_depots;
 
 CREATE TABLE IF NOT EXISTS attachment_blob (
   storage_key text PRIMARY KEY,
@@ -38,7 +45,8 @@ END $$;
 -- OUT077's dry order is left for the judge to place as the store manager.
 -- -----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql AS $$
-DECLARE d date; dispatcher integer; o record; n integer := 0; kg numeric; m3 numeric; lines jsonb; base numeric;
+DECLARE d date; pd date; dispatcher integer; admin integer; o record; n integer := 0; np integer := 0;
+        kg numeric; m3 numeric; lines jsonb; base numeric;
 BEGIN
   -- Wipe operational data first. TRUNCATE does not fire the append-only row triggers.
   TRUNCATE wp.attachment_blob, wp.attachment, wp.receipt_issue, wp.store_receipt, wp.delivery_line, wp.delivery,
@@ -83,31 +91,32 @@ BEGIN
 
   -- Accounts. Emails are the sign-in names (Clerk links them by email on first sign-in).
   -- Local sign-in (Docker): every demo account's password is 'waypoint-demo' (bcrypt hash).
-  INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id, password_hash)
+  INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id, password_hash, all_depots)
   SELECT v.role::wp.user_role, v.name, v.email,
          CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL ELSE (SELECT depot_id FROM wp.depot WHERE name = 'Kandy') END,
          (SELECT outlet_id FROM wp.outlet WHERE code = v.outlet),
          (SELECT vehicle_id FROM wp.vehicle WHERE source_id = v.vehicle),
-         public.crypt('waypoint-demo', public.gen_salt('bf', 8))
+         public.crypt('waypoint-demo', public.gen_salt('bf', 8)),
+         v.role = 'dispatcher'   -- the planning-office dispatcher plans both depots (starts on Kandy)
   FROM (VALUES
-    ('dispatcher',    'Ruwan Perera',      'dispatcher@waypoint.demo',     NULL,     NULL),
-    ('loader',        'Kasun Jayasinghe',  'loader.kandy@waypoint.demo',   NULL,     NULL),
-    ('driver',        'Nuwan Bandara',     'driver.veh057@waypoint.demo',  NULL,     'VEH057'),
-    ('driver',        'Saman Kumara',      'driver.veh059@waypoint.demo',  NULL,     'VEH059'),
-    ('driver',        'Pradeep Silva',     'driver.veh060@waypoint.demo',  NULL,     'VEH060'),
-    ('store_manager', 'Fathima Rizwan',    'store.out077@waypoint.demo',   'OUT077', NULL),
-    ('store_manager', 'Dilani Fernando',   'store.out078@waypoint.demo',   'OUT078', NULL),
-    ('admin',         'Waypoint Admin',    'admin@waypoint.demo',          NULL,     NULL)
+    ('dispatcher',    'Ruwan Perera',      'dispatcher@example.com',     NULL,     NULL),
+    ('loader',        'Kasun Jayasinghe',  'loader.kandy@example.com',   NULL,     NULL),
+    ('driver',        'Nuwan Bandara',     'driver.veh057@example.com',  NULL,     'VEH057'),
+    ('driver',        'Saman Kumara',      'driver.veh059@example.com',  NULL,     'VEH059'),
+    ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060'),
+    ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL),
+    ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL),
+    ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL)
   ) AS v(role, name, email, outlet, vehicle)
   ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = EXCLUDED.name, depot_id = EXCLUDED.depot_id,
-    outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true,
+    outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true, all_depots = EXCLUDED.all_depots,
     password_hash = COALESCE(wp.app_user.password_hash, EXCLUDED.password_hash);
 
   -- Day 5 assumption: VEH058 (refrigerated van, Kandy) is in the workshop; all others available.
   UPDATE wp.vehicle SET active = (source_id <> 'VEH058');
 
   d := wp.next_open_service_date((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'));
-  SELECT user_id INTO dispatcher FROM wp.app_user WHERE email = 'dispatcher@waypoint.demo';
+  SELECT user_id INTO dispatcher FROM wp.app_user WHERE email = 'dispatcher@example.com';
   PERFORM set_config('wp.user_id', dispatcher::text, true);
 
   FOR o IN
@@ -148,14 +157,44 @@ BEGIN
     n := n + 1;
   END LOOP;
 
-  -- A usual order for every Kandy outlet that has none yet (pre-fills the store manager's order form).
+  -- Peliyagoda: an ordinary day for its 75 outlets, so the planning office has both depots to plan.
+  -- Placed as the admin account (the dispatcher is working on Kandy right after a reset).
+  pd := wp.next_open_service_date((SELECT depot_id FROM wp.depot WHERE name = 'Peliyagoda'));
+  SELECT user_id INTO admin FROM wp.app_user WHERE email = 'admin@example.com';
+  PERFORM set_config('wp.user_id', admin::text, true);
+  FOR o IN
+    SELECT ou.outlet_id, ou.code, b.code AS brand, t.temp,
+           CASE b.code WHEN 'F' THEN CASE t.temp WHEN 'chilled' THEN 180 + abs(hashtext(ou.code || 'c')) % 220
+                                                  ELSE 250 + abs(hashtext(ou.code || 'd')) % 350 END
+                       WHEN 'S' THEN 300 + abs(hashtext(ou.code)) % 500
+                       ELSE 150 + abs(hashtext(ou.code)) % 450 END AS kg
+    FROM wp.outlet ou JOIN wp.brand b ON b.brand_id = ou.brand_id
+    CROSS JOIN LATERAL (SELECT unnest(CASE WHEN b.code = 'F' THEN ARRAY['ambient','chilled'] ELSE ARRAY['ambient'] END)::wp.temp_class AS temp) t
+    WHERE ou.depot_id = (SELECT depot_id FROM wp.depot WHERE name = 'Peliyagoda')
+      AND (b.code = 'F' OR abs(hashtext(ou.code)) % 3 <> 0)
+  LOOP
+    kg := o.kg;
+    m3 := round(kg / CASE o.brand WHEN 'S' THEN 100 WHEN 'T' THEN 175 ELSE 170 END, 2);
+    SELECT sum(c.usual * c.unit_kg) INTO base FROM demo_catalogue c
+    WHERE c.brand_id = (SELECT brand_id FROM wp.brand WHERE code = o.brand) AND c.temp = o.temp;
+    SELECT jsonb_agg(jsonb_build_object('product_id', p.product_id, 'qty', GREATEST(1, round(c.usual * kg / base)))
+                     ORDER BY c.sku)
+      INTO lines
+    FROM demo_catalogue c JOIN wp.product p ON p.sku = c.sku
+    WHERE c.brand_id = (SELECT brand_id FROM wp.brand WHERE code = o.brand) AND c.temp = o.temp;
+    PERFORM wp.place_order(gen_random_uuid(), o.outlet_id, o.temp, lines, admin, 'dispatcher', pd, kg, m3);
+    np := np + 1;
+  END LOOP;
+  PERFORM set_config('wp.user_id', dispatcher::text, true);
+
+  -- A usual order for every outlet that has none yet (pre-fills the store manager's order form).
   INSERT INTO wp.outlet_usual_line(outlet_id, temp, product_id, qty)
   SELECT ou.outlet_id, c.temp, p.product_id, c.usual
   FROM wp.outlet ou JOIN demo_catalogue c ON c.brand_id = ou.brand_id JOIN wp.product p ON p.sku = c.sku
-  WHERE ou.depot_id = (SELECT depot_id FROM wp.depot WHERE name = 'Kandy')
-    AND NOT EXISTS (SELECT 1 FROM wp.outlet_usual_line u WHERE u.outlet_id = ou.outlet_id AND u.temp = c.temp)
+  WHERE NOT EXISTS (SELECT 1 FROM wp.outlet_usual_line u WHERE u.outlet_id = ou.outlet_id AND u.temp = c.temp)
   ON CONFLICT DO NOTHING;
 
   RETURN jsonb_build_object('service_date', d, 'orders', n,
-                            'cutoff', wp.run_cutoff((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'), d));
+                            'cutoff', wp.run_cutoff((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'), d),
+                            'peliyagoda', jsonb_build_object('service_date', pd, 'orders', np));
 END $$;

@@ -35,6 +35,10 @@ class VehicleIn(BaseModel):
     active: bool
 
 
+class DepotIn(BaseModel):
+    depot_id: int
+
+
 class ReplyIn(BaseModel):
     type: Literal["skip_stop", "reorder", "hold", "reassign", "proceed_short", "note"] = "note"
     text: str | None = None
@@ -68,6 +72,31 @@ async def _tidy(db, plan_id: int, user: CurrentUser) -> None:
         RETURNING 1""", {"p": plan_id})
     for r in await rows(db, "SELECT route_id FROM route WHERE plan_id = :p AND state = 'planned'", {"p": plan_id}):
         await scalar(db, "SELECT retime_route(:r, :u)", {"r": r["route_id"], "u": user.user_id})
+
+
+# ---------------------------------------------------------------- depots ----
+@router.get("/depots")
+async def depots(user: Dispatcher, db: DbSession):
+    """Depots this dispatcher can plan, and the one they are working on now."""
+    return {
+        "current": user.depot_id,
+        "depots": await rows(db, """
+            SELECT depot_id, name FROM depot
+            WHERE CAST(:all AS boolean) OR depot_id = :d ORDER BY name""", {"all": user.all_depots, "d": user.depot_id}),
+    }
+
+
+@router.post("/depot")
+async def switch_depot(body: DepotIn, user: Dispatcher, db: DbSession):
+    """Planning office: switch the depot this dispatcher is working on. Every screen then shows that depot."""
+    if not user.all_depots:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, {"code": "depot", "message": "This account works at one depot only"})
+    name = await scalar(db, "SELECT name FROM depot WHERE depot_id = :d", {"d": body.depot_id})
+    if name is None:
+        raise not_found("Depot")
+    await rows(db, "UPDATE app_user SET depot_id = :d WHERE user_id = :u RETURNING 1", {"d": body.depot_id, "u": user.user_id})
+    await db.commit()
+    return {"depot_id": body.depot_id, "name": name}
 
 
 # ------------------------------------------------------------------ runs ----

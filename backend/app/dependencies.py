@@ -28,10 +28,11 @@ class CurrentUser:
     depot_id: int | None
     outlet_id: int | None
     vehicle_id: int | None
+    all_depots: bool = False  # planning-office dispatcher: may switch the depot they work on
 
 
 _USER_SQL = """
-SELECT user_id, role::text AS role, name, email, depot_id, outlet_id, vehicle_id
+SELECT user_id, role::text AS role, name, email, depot_id, outlet_id, vehicle_id, all_depots
 FROM wp.app_user WHERE active AND {where}
 """
 

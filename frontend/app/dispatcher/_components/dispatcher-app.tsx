@@ -8,7 +8,7 @@ import { Banner } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, todayIso } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Me, PlanView, Runs, Violation } from "./data";
+import type { Depots, Me, PlanView, Runs, Violation } from "./data";
 import { Deferrals } from "./deferrals";
 import { Ledger } from "./ledger";
 import { LiveMonitor } from "./live-monitor";
@@ -39,6 +39,9 @@ export function DispatcherApp() {
   const request = useApi();
   const me = useApiData<Me>("/me");
   const runs = useApiData<Runs>("/dispatch/runs", 30_000);
+  const depots = useApiData<Depots>("/dispatch/depots");
+  /** Bumped on a depot switch so Live and Records remount and load the new depot. */
+  const [depotKey, setDepotKey] = useState(0);
   const [tab, setTab] = useState<Tab>("plan");
   const [chosenDate, setChosenDate] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -120,6 +123,19 @@ export function DispatcherApp() {
       ),
   };
 
+  /** Planning office: work on another depot. Every tab then shows that depot's runs, trips and records. */
+  async function switchDepot(depotId: number) {
+    const outcome = await act(
+      () => request("/dispatch/depot", { method: "POST", body: { depot_id: depotId } }),
+      (r: { name: string }) => `Now planning ${r.name} depot.`,
+    );
+    if (outcome.ok) {
+      setChosenDate(null);
+      await Promise.all([me.reload(), depots.reload()]);
+      setDepotKey((k) => k + 1);
+    }
+  }
+
   async function resetDemo() {
     if (!window.confirm("Reset the demo? This deletes every order, plan and delivery and seeds a fresh demo day.")) return;
     await act(() => request("/demo/reset", { method: "POST" }), (r: { orders: number; service_date: string }) =>
@@ -133,10 +149,17 @@ export function DispatcherApp() {
       <header className="sticky top-0 z-30 border-b border-wp-border bg-wp-surface">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6">
           <Logo />
-          <div className="hidden text-[11px] leading-4 text-wp-text-2 sm:block">
-            <div className="font-semibold text-wp-text">{me.data?.depot ?? "…"} depot</div>
-            <div>{me.data?.name}</div>
-          </div>
+          {depots.data && depots.data.depots.length > 1 ? (
+            <Select aria-label="Depot" value={depots.data.current ?? ""} disabled={busy}
+                    onChange={(e) => void switchDepot(Number(e.target.value))} className="h-9 text-[13px] font-semibold">
+              {depots.data.depots.map((d) => (
+                <option key={d.depot_id} value={d.depot_id}>{d.name} depot</option>
+              ))}
+            </Select>
+          ) : (
+            <div className="text-[13px] font-semibold">{me.data?.depot ?? "…"} depot</div>
+          )}
+          <div className="hidden text-[11px] leading-4 text-wp-text-2 lg:block">{me.data?.name}</div>
           <div className="ml-auto flex items-center gap-2">
             {(tab === "plan" || tab === "deferrals") && dates.length > 0 && (
               <Select aria-label="Delivery day" value={date ?? ""} onChange={(e) => setChosenDate(e.target.value)} className="h-9 text-[13px]">
@@ -201,8 +224,8 @@ export function DispatcherApp() {
         <Deferrals date={date} plan={plan.data ?? null} busy={busy} actions={actions}
                    onTryToFit={(orderId) => { setMoveRequest(orderId); setTab("plan"); }} onTab={setTab} />
       )}
-      {tab === "live" && <LiveMonitor />}
-      {tab === "ledger" && <Ledger />}
+      {tab === "live" && <LiveMonitor key={depotKey} />}
+      {tab === "ledger" && <Ledger key={depotKey} />}
     </div>
   );
 }

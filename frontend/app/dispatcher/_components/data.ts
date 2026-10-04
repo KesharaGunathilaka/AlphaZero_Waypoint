@@ -7,7 +7,8 @@ export type BrandCode = "F" | "S" | "T";
 export const BRAND: Record<BrandCode, Brand> = { F: "fresh", S: "style", T: "tech" };
 export const BRAND_NAME: Record<BrandCode, string> = { F: "Fresh", S: "Style", T: "Tech" };
 
-export type Me = { name: string; role: string; depot: string | null };
+export type Me = { name: string; role: string; depot: string | null; all_depots?: boolean };
+export type Depots = { current: number | null; depots: { depot_id: number; name: string }[] };
 
 export type Run = {
   run_id: number;
