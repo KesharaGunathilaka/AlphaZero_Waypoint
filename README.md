@@ -152,9 +152,3 @@ data/general/   the seven General Data CSVs (the only competition data in the re
 docs/       deploy guide, database, API, UX by role (+ screenshots)
 docker-compose.yml, .env.example   Docker delivery (docker compose up)
 ```
-
-## AI assistance
-
-Parts of this project were written with an AI coding assistant (Claude Code, Anthropic): schema
-review against the booklet, the allocation engine, API endpoints, frontend wiring, tests and
-documentation. Every change was reviewed, run and tested by the team; design decisions are the team's.
