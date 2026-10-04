@@ -257,7 +257,10 @@ async def monitor(user: Dispatcher, db: DbSession):
     return {
         "runs": await rows(db, "SELECT * FROM run_progress WHERE state IN ('planned', 'in_progress', 'complete') "
                                "ORDER BY service_date DESC LIMIT 3"),
-        "fleet": await rows(db, "SELECT * FROM fleet_status ORDER BY vehicle_code, route_seq"),
+        "fleet": await rows(db, """
+            SELECT f.*, v.source_id AS vehicle_source_id FROM fleet_status f
+            JOIN route r ON r.route_id = f.route_id JOIN vehicle v ON v.vehicle_id = r.vehicle_id
+            ORDER BY v.source_id, f.route_seq"""),
         "exceptions": await rows(db, "SELECT * FROM monitor_exceptions ORDER BY urgency, since"),
         # Stop by stop for every live trip: plan against what the phones have reported.
         "stops": await rows(db, """

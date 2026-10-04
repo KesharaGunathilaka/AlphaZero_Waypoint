@@ -5,6 +5,7 @@ import type { Tone } from "@/components/waypoint/status";
 
 export type BrandCode = "F" | "S" | "T";
 export const BRAND: Record<BrandCode, Brand> = { F: "fresh", S: "style", T: "tech" };
+export const BRAND_NAME: Record<BrandCode, string> = { F: "Fresh", S: "Style", T: "Tech" };
 
 export type Me = { name: string; role: string; depot: string | null };
 
@@ -136,6 +137,7 @@ export type RunProgress = {
 export type FleetRow = {
   route_id: number;
   vehicle_code: string;
+  vehicle_source_id: string;
   route_seq: number;
   state: string;
   driver_name: string | null;

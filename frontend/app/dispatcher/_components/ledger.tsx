@@ -30,7 +30,7 @@ function outcomeStyle(r: LedgerRecord): { state: Tone; label: string } {
 
 const ROW_COLUMNS = "grid grid-cols-[minmax(0,1.3fr)_130px_90px_170px_minmax(0,1.4fr)_120px_110px] gap-3";
 
-/** D4 · Record ledger: deferrals and deliveries over time, with each order's event trail. */
+/** Records: deferrals and deliveries over time, with each order's event trail. */
 export function Ledger() {
   const ledger = useApiData<LedgerData>("/dispatch/ledger", 60_000);
   const [preset, setPreset] = useState<Preset>("deferrals");
@@ -192,5 +192,5 @@ function OrderTrail({ orderId }: { orderId: number }) {
 const Row = ({ children }: { children: ReactNode }) => <div className="flex flex-wrap gap-2">{children}</div>;
 
 function Page({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-6">{children}</div>;
+  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
 }

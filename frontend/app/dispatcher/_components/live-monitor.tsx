@@ -9,7 +9,7 @@ import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EXCEPTION_STYLE, type Exception, type FleetRow, type Monitor } from "./data";
 
-const FLEET_COLUMNS = "grid grid-cols-[110px_130px_minmax(0,1fr)_70px_190px] gap-3";
+const FLEET_COLUMNS = "grid grid-cols-[120px_120px_minmax(0,1fr)_64px_180px] gap-3";
 const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_56px_96px_70px] gap-2";
 
 /** How a vehicle is doing, worst first. No signal never shows as "on time": we do not know. */
@@ -32,7 +32,7 @@ function dots(f: FleetRow) {
   return done + now + "○".repeat(Math.max(0, f.stops_total - f.stops_done - now.length));
 }
 
-/** D3 · Live run monitor: what needs attention now, and every vehicle sorted by risk. */
+/** Live: what needs attention now, and every vehicle sorted by risk. */
 export function LiveMonitor() {
   const monitor = useApiData<Monitor>("/dispatch/monitor", 15_000);
   const request = useApi();
@@ -61,14 +61,17 @@ export function LiveMonitor() {
 
   const m = monitor.data;
   const run = m.runs[0];
-  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || a.vehicle_code.localeCompare(b.vehicle_code));
+  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || a.vehicle_source_id.localeCompare(b.vehicle_source_id));
   const chosen = fleet.find((f) => f.route_id === selected);
+  // Exception texts come from the database with fleet codes (RV-03); show the VEH ids used everywhere else.
+  const codes = new Map(m.fleet.map((f) => [f.vehicle_code, f.vehicle_source_id]));
+  const named = (text: string) => text.replace(/\b[A-Z]{2}-\d{2}\b/g, (code) => codes.get(code) ?? code);
   const chosenStops = chosen ? m.stops.filter((s) => s.route_id === chosen.route_id) : [];
 
   return (
     <Page>
       <div className="flex flex-wrap items-center gap-4">
-        <h1 className="text-[22px] leading-6 font-bold">Live run monitor{run ? ` · ${formatDay(run.service_date)}` : ""}</h1>
+        <h1 className="text-[22px] leading-7 font-bold">Live{run ? ` · deliveries on ${formatDay(run.service_date)}` : ""}</h1>
         {monitor.error ? (
           <StatusPill state="offline">Not receiving updates since {formatTime(m.server_time)}</StatusPill>
         ) : (
@@ -78,9 +81,9 @@ export function LiveMonitor() {
       </div>
 
       {!run ? (
-        <Banner state="info">No released plan yet. Release a plan in D1 and its trips appear here.</Banner>
+        <Banner state="info">No plan sent yet. Send the plan from the Plan tab and its trips appear here.</Banner>
       ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-4">
           <KpiTile label="Trips departed" value={`${run.routes_departed} of ${m.fleet.length}`} context={`${fleet.filter((f) => ["planned", "loading", "loaded"].includes(f.state)).length} still at the depot`} />
           <KpiTile label="Orders delivered" value={`${run.orders_delivered} of ${run.orders_total}`} context={`Plan says ${run.orders_due_by_now} by now`} />
           <KpiTile label="Fresh at risk of missing its window" value={run.fresh_at_risk} context="Not yet delivered, deadline close" />
@@ -98,7 +101,7 @@ export function LiveMonitor() {
             <div key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}`} className="flex flex-wrap items-center gap-4 border-t border-wp-border py-3">
               <div className="w-[150px] flex-none"><StatusPill state={style.state}>{style.label}</StatusPill></div>
               <div className="min-w-[220px] flex-1">
-                <div className="font-semibold">{e.detail}</div>
+                <div className="font-semibold">{named(e.detail)}</div>
                 {e.kind === "no_signal" && (
                   <div className="text-[11px] text-wp-text-2">
                     The driver’s phone keeps recording offline. Stops after the last signal show as not confirmed until it syncs.
@@ -121,9 +124,10 @@ export function LiveMonitor() {
         })}
       </section>
 
-      <div className="grid items-start gap-4" style={{ gridTemplateColumns: `minmax(0,1fr) minmax(0,${chosen ? "460px" : "0px"})` }}>
-        <section className="flex flex-col gap-1 rounded-lg border border-wp-border bg-wp-surface p-4">
-          <h2 className="mb-2 text-[15px] leading-5 font-semibold">All trips · sorted by risk</h2>
+      <div className={cn("grid items-start gap-4", chosen && "xl:grid-cols-[minmax(0,1fr)_460px]")}>
+        <section className="flex flex-col gap-1 overflow-x-auto rounded-lg border border-wp-border bg-wp-surface p-4">
+          <h2 className="mb-2 text-[15px] leading-5 font-semibold">All trips · most at risk first</h2>
+          <div className="flex min-w-[620px] flex-col gap-1">
           <div className={cn(FLEET_COLUMNS, "px-2 text-[10px] font-semibold tracking-[.06em] text-wp-muted uppercase")}>
             <div>Vehicle</div><div>Stops</div><div>Next stop</div><div>Planned</div><div>Status</div>
           </div>
@@ -134,7 +138,7 @@ export function LiveMonitor() {
                       aria-pressed={selected === f.route_id}
                       className={cn(FLEET_COLUMNS, "min-h-10 cursor-pointer items-center border-t border-wp-border px-2 text-left",
                                     selected === f.route_id ? "bg-wp-info-tint" : "bg-transparent")}>
-                <div className="font-semibold">{f.vehicle_code} · T{f.route_seq}</div>
+                <div className="font-semibold">{f.vehicle_source_id} · trip {f.route_seq}</div>
                 <div className="text-xs tracking-[2px]">{dots(f)}</div>
                 <div>{f.next_outlet ?? (f.state === "complete" ? "Back to depot" : "—")}</div>
                 <div>{f.next_planned ? formatTime(f.next_planned) : "—"}</div>
@@ -142,6 +146,7 @@ export function LiveMonitor() {
               </button>
             );
           })}
+          </div>
           <div className="mt-2 text-[11px] text-wp-muted">● done · ◉ now · ○ to do</div>
         </section>
 
@@ -149,7 +154,7 @@ export function LiveMonitor() {
           <section className="flex flex-col gap-2 rounded-lg border border-wp-border bg-wp-surface p-4">
             <div className="flex items-center justify-between">
               <h2 className="text-[15px] leading-5 font-semibold">
-                {chosen.vehicle_code} trip {chosen.route_seq} · plan against actual
+                {chosen.vehicle_source_id} trip {chosen.route_seq} · plan against actual
               </h2>
               <button type="button" onClick={() => setSelected(null)} className="cursor-pointer text-sm text-wp-muted">✕ Close</button>
             </div>
@@ -189,5 +194,5 @@ export function LiveMonitor() {
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-6">{children}</div>;
+  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
 }

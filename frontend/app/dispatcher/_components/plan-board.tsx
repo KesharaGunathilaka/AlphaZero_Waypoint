@@ -1,32 +1,37 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, Search, Snowflake, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Chip } from "@/components/waypoint/controls";
-import { BrandMonogram, KpiTile } from "@/components/waypoint/data";
-import { CapacityGauge, StatusPill } from "@/components/waypoint/status";
-import { formatDay, formatDayTime, formatTime, timeLeft } from "@/lib/format";
+import { BrandMonogram } from "@/components/waypoint/data";
+import { StatusPill } from "@/components/waypoint/status";
+import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { BRAND, quickBlock, type PlanView, type Route, type Run, type Vehicle } from "./data";
-import type { PlanActions } from "./dispatcher-app";
+import { BRAND, BRAND_NAME, quickBlock, type BrandCode, type PlanView, type Route, type Run, type Vehicle } from "./data";
+import { DayProgress } from "./day-progress";
+import type { PlanActions, Tab } from "./dispatcher-app";
 
-const CHIPS = ["All", "Chilled", "Van-only", "Fresh", "Style", "Tech"] as const;
-type ChipFilter = (typeof CHIPS)[number];
+const FILTERS = ["All", "Fresh", "Style", "Tech", "Chilled", "Vans"] as const;
+type Filter = (typeof FILTERS)[number];
 
-/** An order the dispatcher has picked up to move: from the queue or from a stop on a trip. */
-type Picked = { order_id: number; label: string; temp: string; van_only: boolean; kg: number; m3: number };
+/** An order the dispatcher wants to put on another trip. */
+type Moving = {
+  order_id: number;
+  label: string;
+  temp: string;
+  van_only: boolean;
+  kg: number;
+  m3: number;
+  brand: BrandCode;
+  district: string;
+  from_route: number | null;
+};
 
-const LANE_COLUMNS = "grid grid-cols-[150px_minmax(0,1fr)_230px_80px] gap-4";
-/** The lane time bar runs 03:00 to 18:00 Sri Lanka time; the dashed line marks Fresh's 08:00. */
-const BAR_START = 3 * 60;
-const BAR_END = 18 * 60;
+const ROW = "md:grid md:grid-cols-[minmax(150px,1fr)_minmax(150px,1fr)_104px_minmax(160px,1.5fr)_150px_64px_24px] md:items-center md:gap-3";
 
-function minutesOfDay(iso: string) {
-  const [h, m] = formatTime(iso).split(":").map(Number);
-  return h * 60 + m;
-}
-const barLeft = (iso: string) => `${Math.min(100, Math.max(0, ((minutesOfDay(iso) - BAR_START) / (BAR_END - BAR_START)) * 100))}%`;
+const pct = (r: Route) => Math.round(Math.max(Number(r.weight_pct), Number(r.volume_pct)));
 
-/** D1 · Plan board: close orders, let the engine propose, adjust trips, then release the plan. */
+/** Plan: the day's steps, then every trip in one scannable table. Details open on demand. */
 export function PlanBoard({
   date,
   run,
@@ -34,7 +39,9 @@ export function PlanBoard({
   loading,
   busy,
   actions,
-  onGoToDeferrals,
+  onTab,
+  moveRequest,
+  onMoveRequestHandled,
 }: {
   date: string | null;
   run: Run | null;
@@ -42,323 +49,402 @@ export function PlanBoard({
   loading: boolean;
   busy: boolean;
   actions: PlanActions;
-  onGoToDeferrals: () => void;
+  onTab: (tab: Tab) => void;
+  moveRequest: number | null;
+  onMoveRequestHandled: () => void;
 }) {
-  const [chip, setChip] = useState<ChipFilter>("All");
-  const [picked, setPicked] = useState<Picked | null>(null);
+  const [filter, setFilter] = useState<Filter>("All");
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [moving, setMoving] = useState<Moving | null>(null);
   const [showIdle, setShowIdle] = useState(false);
 
-  if (!date) return <Page><div className="text-wp-text-2">Loading runs…</div></Page>;
+  // Opened from the Deferred tab: "Try to fit" this order.
+  useEffect(() => {
+    if (moveRequest === null || !plan) return;
+    const u = plan.unplanned.find((x) => x.order_id === moveRequest);
+    onMoveRequestHandled();
+    if (u) {
+      // A deliberate one-off hand-over from another tab, not derived state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMoving({ order_id: u.order_id, label: `${u.outlet_code} ${u.temp}`, temp: u.temp, van_only: u.van_only,
+                  kg: Number(u.weight_kg), m3: Number(u.volume_m3), brand: u.brand_code, district: u.district, from_route: null });
+    }
+  }, [moveRequest, plan, onMoveRequestHandled]);
 
-  // Before the cutoff (or before anyone closed orders) there is no plan yet.
+  const vehicleOf = useMemo(() => new Map((plan?.vehicles ?? []).map((v) => [v.vehicle_id, v])), [plan]);
+
+  if (!date) return <Page><div className="text-wp-text-2">Loading…</div></Page>;
+
   if (!run?.plan_id || !plan) {
     return (
       <Page>
-        <h1 className="text-[22px] leading-6 font-bold">Plan board · {formatDay(date)}, Kandy depot</h1>
-        {loading && run?.plan_id ? (
-          <div className="text-wp-text-2">Loading the plan…</div>
-        ) : (
-          <div className="flex flex-col gap-3 rounded-lg border border-wp-border bg-wp-surface p-4">
-            <div className="text-[15px] font-semibold">
-              {run ? `${run.orders} orders placed so far` : "No orders placed for this day yet"}
-            </div>
-            <div className="text-wp-text-2">
-              {run
-                ? `Store managers can order until ${formatDayTime(run.cutoff_at)} (${timeLeft(run.cutoff_at)}). Closing orders confirms them and opens planning. Orders placed after that join the next run.`
-                : "Orders appear here as store managers place them."}
-            </div>
-            <div>
-              <Button disabled={!run || busy} onClick={() => void actions.closeOrders()}>
-                Close orders now and start planning
-              </Button>
-            </div>
-          </div>
-        )}
+        <Title date={date} subtitle={loading && run?.plan_id ? "Loading the plan…" : "Orders are still open for this day"} />
+        <DayProgress run={run} plan={null} busy={busy} actions={actions} onTab={onTab} />
+        <div className="rounded-lg border border-wp-border bg-wp-surface p-4 text-wp-text-2">
+          Store managers place orders until the cutoff (16:00 the working day before). Closing orders confirms them;
+          anything ordered later goes to the next delivery day.
+        </div>
       </Page>
     );
   }
 
   const released = plan.plan.state === "released";
-  const s = plan.summary;
+  // Before the engine runs nothing is "deferred" yet: every order is simply not planned.
+  const built = plan.routes.length > 0;
+  const deferred = built ? plan.unplanned : [];
   const conflicts = plan.violations.filter((v) => v.code !== "unplanned");
-  const undecided = plan.unplanned.filter((u) => !u.drafted_reason);
-  const routesByVehicle = new Map<number, Route[]>();
-  for (const r of plan.routes) routesByVehicle.set(r.vehicle_id, [...(routesByVehicle.get(r.vehicle_id) ?? []), r]);
-  const usedVehicles = plan.vehicles.filter((v) => routesByVehicle.has(v.vehicle_id));
-  const idleVehicles = plan.vehicles.filter((v) => !routesByVehicle.has(v.vehicle_id));
+  const usedIds = new Set(plan.routes.map((r) => r.vehicle_id));
+  const idle = plan.vehicles.filter((v) => !usedIds.has(v.vehicle_id));
+  const q = query.trim().toLowerCase();
 
-  const queue = plan.unplanned.filter((o) => {
-    switch (chip) {
-      case "Chilled": return o.temp === "chilled";
-      case "Van-only": return o.van_only;
-      case "Fresh": return o.brand_code === "F";
-      case "Style": return o.brand_code === "S";
-      case "Tech": return o.brand_code === "T";
-      default: return true;
-    }
-  });
+  const routes = [...plan.routes]
+    .sort((a, b) => a.depart_at.localeCompare(b.depart_at) || a.vehicle_id - b.vehicle_id)
+    .filter((r) => {
+      const v = vehicleOf.get(r.vehicle_id);
+      switch (filter) {
+        case "Fresh": if (r.brand_code !== "F") return false; break;
+        case "Style": if (r.brand_code !== "S") return false; break;
+        case "Tech": if (r.brand_code !== "T") return false; break;
+        case "Chilled": if (!r.stops.some((s) => s.orders?.some((o) => o.temp === "chilled"))) return false; break;
+        case "Vans": if (!r.is_van) return false; break;
+      }
+      if (!q) return true;
+      return [v?.source_id, r.vehicle_code, r.district_name, ...r.stops.map((s) => s.outlet_code)]
+        .some((x) => x?.toLowerCase().includes(q));
+    });
 
-  async function moveTo(vehicleId: number, seq: 1 | 2) {
-    if (!picked) return;
-    const result = await actions.move(picked.order_id, vehicleId, seq);
-    if (result.ok) setPicked(null);
+  function toggle(id: number) {
+    const next = new Set(open);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setOpen(next);
   }
 
-  const releaseLabel = released
-    ? plan.plan.dirty ? `Re-issue plan v${plan.plan.version + 1}` : `Plan v${plan.plan.version} released`
-    : conflicts.length + undecided.length > 0
-      ? `Release plan · ${conflicts.length + undecided.length} to resolve`
-      : "Release plan";
-
+  const s = plan.summary;
   return (
     <Page>
-      <div className="flex flex-wrap items-center gap-4">
-        <div>
-          <h1 className="text-[22px] leading-6 font-bold">Plan board · {formatDay(date)}, Kandy depot</h1>
-          <div className="mt-1 text-[11px] text-wp-text-2">
-            {released ? `Plan v${plan.plan.version} released` : "Draft, not released"}
-            {plan.plan.dirty && released ? " · changes not yet re-issued" : ""} · Saved {formatTime(plan.plan.edited_at)} ·
-            Every move is checked against the operating rules
-          </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {!released && (
-            <Button variant="secondary" disabled={busy} onClick={() => void actions.propose()}>
-              {plan.routes.length ? "Re-run the engine" : "Propose plan (engine)"}
-            </Button>
-          )}
-          <Button
-            disabled={busy || conflicts.length + undecided.length > 0 || (released && !plan.plan.dirty)}
-            onClick={() => void actions.release()}
-          >
-            {releaseLabel}
-          </Button>
-        </div>
-      </div>
+      <Title
+        date={date}
+        subtitle={released
+          ? `Plan v${plan.plan.version} sent${plan.plan.dirty ? " · you have changes not sent yet" : ""}`
+          : "Draft · not sent yet · every change is checked against the operating rules"}
+      />
+      <DayProgress run={run} plan={plan} busy={busy} actions={actions} onTab={onTab} />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiTile label="Orders planned" value={`${s?.orders_planned ?? 0} of ${s?.orders_confirmed ?? 0}`} context="Confirmed at the cutoff" />
-        <KpiTile label="Cannot fit" value={plan.unplanned.length}
-                 context={undecided.length ? `${undecided.length} without a decision · open D2` : plan.unplanned.length ? "All have a deferral reason" : "Every order has a trip"} />
-        <KpiTile label="Rule conflicts" value={conflicts.length} context={conflicts.length ? "Fix before release" : "No vehicle over a limit"} />
-        <KpiTile label="Refrigerated vehicles free" value={`${s?.refrigerated_free ?? 0} of ${s?.refrigerated_total ?? 0}`}
-                 context="Available, with no trip yet" />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Orders on trips" value={`${s?.orders_planned ?? 0} / ${s?.orders_confirmed ?? 0}`} />
+        <Stat label="Deferred" value={built ? deferred.length : "—"} tone={deferred.length ? "warn" : undefined}
+              onClick={deferred.length ? () => onTab("deferrals") : undefined} />
+        <Stat label="Trips" value={plan.routes.length} />
+        <Stat label="Vehicles used" value={`${usedIds.size} / ${plan.vehicles.filter((v) => v.active).length}`} />
+        <Stat label="Refrigerated free" value={`${s?.refrigerated_free ?? 0} / ${s?.refrigerated_total ?? 0}`} />
+        <Stat label="Rule problems" value={conflicts.length} tone={conflicts.length ? "crit" : "good"} />
       </div>
 
       {conflicts.length > 0 && (
-        <div className="flex flex-col gap-1 rounded-lg border border-wp-crit bg-wp-crit-tint p-3 text-wp-crit">
-          <div className="text-[11px] font-semibold tracking-[.06em]">✕ RULE CONFLICTS</div>
-          {conflicts.map((v, i) => (
-            <div key={i} className="text-[13px]">{v.message}</div>
-          ))}
+        <div role="alert" className="flex flex-col gap-1 rounded-lg border border-wp-crit bg-wp-crit-tint p-3 text-wp-crit">
+          <div className="text-[12px] font-bold">Fix before sending · {conflicts.length} rule {conflicts.length === 1 ? "problem" : "problems"}</div>
+          {conflicts.map((v, i) => <div key={i}>{v.message}</div>)}
         </div>
       )}
 
-      {plan.routes.length === 0 && !released && (
-        <div className="rounded-lg bg-wp-info-tint px-3 py-2 text-xs font-semibold text-wp-info">
-          ● No trips yet. Let the engine propose a plan that already meets every rule, then adjust it.
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(300px,360px)_minmax(0,1fr)]">
-        <section className="flex flex-col gap-3 rounded-lg border border-wp-border bg-wp-surface p-4">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-[15px] leading-5 font-semibold">Unplanned orders · {plan.unplanned.length}</h2>
+      {deferred.length > 0 && (
+        <section className="rounded-lg border border-wp-gauge-amber bg-wp-warn-tint/60 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-wp-warn">
+              ▲ {deferred.length} {deferred.length === 1 ? "order goes" : "orders go"} to{" "}
+              {plan.next_operating_day ? formatDay(plan.next_operating_day) : "the next run"}
+            </span>
+            <span className="text-wp-text-2">No legal trip can take {deferred.length === 1 ? "it" : "them"} today.</span>
+            <Button variant="link" className="ml-auto px-0" onClick={() => onTab("deferrals")}>Check reasons</Button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {CHIPS.map((c) => (
-              <Chip key={c} active={chip === c} onClick={() => setChip(c)}>
-                {c}
-              </Chip>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {deferred.map((u) => (
+              <span key={u.order_id} className="inline-flex items-center gap-2 rounded-md border border-wp-border bg-wp-surface px-2 py-1">
+                <BrandMonogram brand={BRAND[u.brand_code]} outlet={u.outlet_code} />
+                <span className="text-[12px] text-wp-text-2">{u.temp === "chilled" ? "❄ " : ""}{Number(u.weight_kg)} kg · {u.suggested_label ?? u.drafted_reason}</span>
+                {!released && (
+                  <button type="button" className="cursor-pointer text-[12px] font-semibold text-wp-focus underline"
+                          onClick={() => setMoving({ order_id: u.order_id, label: `${u.outlet_code} ${u.temp}`, temp: u.temp, van_only: u.van_only,
+                                                     kg: Number(u.weight_kg), m3: Number(u.volume_m3), brand: u.brand_code, district: u.district, from_route: null })}>
+                    Try to fit
+                  </button>
+                )}
+              </span>
             ))}
           </div>
-          {queue.map((order) => {
-            const open = picked?.order_id === order.order_id;
-            return (
-              <div
-                key={order.order_id}
-                onClick={() => setPicked(open ? null : {
-                  order_id: order.order_id, label: `${order.outlet_code} ${order.temp}`, temp: order.temp,
-                  van_only: order.van_only, kg: Number(order.weight_kg), m3: Number(order.volume_m3),
-                })}
-                className={cn(
-                  "cursor-pointer rounded-lg border bg-wp-surface p-3",
-                  open ? "border-wp-action shadow-[0_0_0_1px_var(--wp-action)]" : "border-wp-border",
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <BrandMonogram brand={BRAND[order.brand_code]} outlet={`${order.district} ${order.outlet_code}`} />
-                  {order.drafted_reason ? <StatusPill state="warn">Deferral decided</StatusPill> : <StatusPill state="crit">Cannot fit</StatusPill>}
-                </div>
-                <div className="mt-2 text-[11px] text-wp-text-2">
-                  {Number(order.weight_kg)} kg · {Number(order.volume_m3)} m³ · {order.temp === "chilled" ? "Chilled" : "Ambient"}
-                  {order.van_only ? " · Van-only outlet" : ""}
-                </div>
-                <div className="text-[11px] text-wp-text-2">System found: {order.suggested_label ?? "—"}</div>
-                {open && (
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-wp-text-2" onClick={(e) => e.stopPropagation()}>
-                    Pick a trip on the right to place it, or
-                    <Button variant="secondary" onClick={onGoToDeferrals}>Decide in D2</Button>
+        </section>
+      )}
+
+      <section className="rounded-lg border border-wp-border bg-wp-surface">
+        <div className="flex flex-wrap items-center gap-2 border-b border-wp-border p-3">
+          <h2 className="mr-2 text-[15px] font-semibold">Trips</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {FILTERS.map((f) => (
+              <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>{f}</Chip>
+            ))}
+          </div>
+          <label className="relative ml-auto w-full sm:w-56">
+            <span className="sr-only">Find a vehicle, outlet or district</span>
+            <Search aria-hidden className="pointer-events-none absolute top-2.5 left-2.5 size-3.5 text-wp-muted" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find vehicle, outlet, district"
+                   className="h-9 w-full rounded-md border border-wp-border bg-wp-surface pr-2 pl-8 text-[13px] outline-none focus:border-wp-focus" />
+          </label>
+        </div>
+
+        <div className={cn(ROW, "hidden border-b border-wp-border px-3 py-2 text-[10px] font-semibold tracking-[.06em] text-wp-muted uppercase md:grid")}>
+          <div>Vehicle · trip</div><div>Goes to</div><div>Leaves – back</div><div>Stops in order</div><div title="The fuller of weight and volume">Load</div><div>Fuel left</div><div />
+        </div>
+
+        {routes.length === 0 && (
+          <div className="p-4 text-wp-text-2">
+            {built ? "No trip matches." : `No trips yet. “Build the plan” lets the engine place all ${plan.unplanned.length} orders it legally can.`}
+          </div>
+        )}
+        {routes.map((r) => {
+          const v = vehicleOf.get(r.vehicle_id);
+          const isOpen = open.has(r.route_id);
+          const chilled = r.stops.some((st) => st.orders?.some((o) => o.temp === "chilled"));
+          const load = pct(r);
+          return (
+            <div key={r.route_id} className="border-b border-wp-border last:border-b-0">
+              <button type="button" onClick={() => toggle(r.route_id)} aria-expanded={isOpen}
+                      className={cn(ROW, "flex w-full cursor-pointer flex-col gap-1 px-3 py-2.5 text-left hover:bg-wp-surface-2/60", isOpen && "bg-wp-surface-2/60")}>
+                <div className="flex w-full items-center justify-between gap-2 md:block">
+                  <div>
+                    <span className="text-[14px] font-bold">{v?.source_id ?? r.vehicle_code}</span>
+                    <span className="text-wp-text-2"> · trip {r.route_seq}</span>
+                    <div className="text-[11px] text-wp-muted">{r.vehicle_class}</div>
                   </div>
+                  <span className="md:hidden">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <BrandMonogram brand={BRAND[r.brand_code]} outlet={r.district_name} />
+                  {chilled && <Snowflake aria-label="Carries chilled goods" className="size-3.5 text-wp-info" />}
+                </div>
+                <div className="font-semibold">{formatTime(r.depart_at)} – {formatTime(r.return_at)}</div>
+                <div className="truncate text-wp-text-2" title={r.stops.map((st) => st.outlet_code).join(" → ")}>
+                  {r.stops.length} · {r.stops.map((st) => st.outlet_code).join(" → ")}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-16 flex-none overflow-hidden rounded bg-wp-surface-2" role="img" aria-label={`Load ${load} percent`}>
+                    <div className={cn("h-full", load >= 100 ? "bg-wp-crit" : load >= 90 ? "bg-wp-gauge-amber" : "bg-wp-offline")} style={{ width: `${Math.min(load, 100)}%` }} />
+                  </div>
+                  <span className="text-[12px]"><b>{load}%</b> <span className="text-wp-muted">{Math.round(r.weight_kg)} kg</span></span>
+                </div>
+                <div className="text-[12px]">{r.fuel_left_l !== null ? `${Math.round(Number(r.fuel_left_l))} L` : "—"}</div>
+                <div className="hidden md:block">{isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}</div>
+              </button>
+
+              {isOpen && (
+                <div className="flex flex-col gap-2 bg-wp-surface-2/40 px-3 pt-1 pb-3">
+                  <div className="text-[12px] text-wp-text-2">
+                    {r.trip_minutes} min of driving and unloading · {Math.round(r.weight_kg)} of {Math.round(r.max_weight_kg)} kg ·{" "}
+                    {Number(r.volume_m3).toFixed(1)} of {Number(r.max_volume_m3).toFixed(1)} m³ · driver {r.driver_name ?? "not linked"}
+                  </div>
+                  <ol className="flex flex-col gap-1">
+                    {r.stops.map((st) => (
+                      <li key={st.stop_id} className="flex flex-wrap items-center gap-2 rounded-md bg-wp-surface px-2 py-1.5">
+                        <span className="w-12 font-semibold">{formatTime(st.planned_arrival)}</span>
+                        <span className="font-semibold">{st.seq}. {st.outlet_code}</span>
+                        <span className="text-[12px] text-wp-muted">{st.unload.replace("_", " ")}{st.van_only ? " · van-only" : ""}</span>
+                        <span className="ml-auto flex flex-wrap gap-1.5">
+                          {(st.orders ?? []).map((o) => (
+                            <span key={o.order_id} className="inline-flex items-center gap-1.5 rounded border border-wp-border px-1.5 py-0.5 text-[12px]">
+                              {o.temp === "chilled" ? "❄ Chilled" : "Dry"} · {Number(o.kg)} kg
+                              {!released && (
+                                <button type="button" className="cursor-pointer font-semibold text-wp-focus underline"
+                                        onClick={() => setMoving({ order_id: o.order_id, label: `${st.outlet_code} ${o.temp}`, temp: o.temp, van_only: st.van_only,
+                                                                   kg: Number(o.kg), m3: Number(o.m3), brand: r.brand_code, district: r.district_name, from_route: r.route_id })}>
+                                  Move
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="rounded-lg border border-wp-border bg-wp-surface p-3">
+        <button type="button" onClick={() => setShowIdle(!showIdle)} aria-expanded={showIdle}
+                className="flex w-full cursor-pointer items-center gap-2 text-left font-semibold">
+          {showIdle ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          {idle.length} vehicles without a trip
+          {idle.some((v) => !v.active) && <StatusPill state="offline">{idle.filter((v) => !v.active).length} in the workshop</StatusPill>}
+        </button>
+        {showIdle && (
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {idle.map((v) => (
+              <li key={v.vehicle_id} className="flex items-center gap-2 rounded-md border border-wp-border px-3 py-2">
+                <div className="flex-1">
+                  <div className="font-semibold">{v.source_id} <span className="font-normal text-wp-muted">· {v.class}</span></div>
+                  <div className="text-[12px] text-wp-text-2">{Number(v.max_weight_kg)} kg · {Number(v.max_volume_m3)} m³ · fuel {v.fuel_left_l !== null ? `${Math.round(Number(v.fuel_left_l))} L` : "—"}</div>
+                </div>
+                {!v.active && <StatusPill state="offline">Workshop</StatusPill>}
+                {!released && (
+                  <Button variant="secondary" disabled={busy} onClick={() => void actions.setVehicleActive(v.vehicle_id, !v.active)}>
+                    {v.active ? "To workshop" : "Back in service"}
+                  </Button>
                 )}
-              </div>
-            );
-          })}
-          {plan.unplanned.length === 0 && plan.routes.length > 0 && (
-            <div className="py-2 font-semibold text-wp-good">✓ Every order is on a trip.</div>
-          )}
-        </section>
-
-        <section className="flex flex-col gap-3 rounded-lg border border-wp-border bg-wp-surface p-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <h2 className="text-[15px] leading-5 font-semibold">Vehicle lanes · {usedVehicles.length} in use</h2>
-            <div className="text-[11px] text-wp-muted">
-              {picked ? `Placing ${picked.label} (${picked.kg} kg · ${picked.m3} m³): choose a trip` : "Select an order to move it"}
-            </div>
-          </div>
-          {picked && (
-            <div className="flex items-center gap-2 rounded-md bg-wp-info-tint px-3 py-2 text-xs font-semibold text-wp-info">
-              ● Moving {picked.label}. Dimmed vehicles cannot take it; the server checks every rule when you drop it.
-              <button type="button" className="ml-auto cursor-pointer underline" onClick={() => setPicked(null)}>Cancel</button>
-            </div>
-          )}
-          <div className={cn(LANE_COLUMNS, "px-3 text-[10px] font-semibold tracking-[.06em] text-wp-muted uppercase")}>
-            <div>Vehicle</div>
-            <div>Trips · 03:00 to 18:00</div>
-            <div>Load against limit</div>
-            <div>Fuel left</div>
-          </div>
-
-          {usedVehicles.map((v) => (
-            <Lane key={v.vehicle_id} vehicle={v} routes={routesByVehicle.get(v.vehicle_id) ?? []} picked={picked}
-                  busy={busy} released={released} onPick={setPicked} onMove={moveTo} onActive={actions.setVehicleActive} />
-          ))}
-          <button type="button" className="cursor-pointer text-left text-xs font-semibold text-wp-action underline"
-                  onClick={() => setShowIdle(!showIdle)}>
-            {showIdle ? "Hide" : "Show"} {idleVehicles.length} vehicles without a trip
-            {idleVehicles.some((v) => !v.active) ? ` (${idleVehicles.filter((v) => !v.active).length} in the workshop)` : ""}
-          </button>
-          {(showIdle || picked) &&
-            idleVehicles.map((v) => (
-              <Lane key={v.vehicle_id} vehicle={v} routes={[]} picked={picked} busy={busy} released={released}
-                    onPick={setPicked} onMove={moveTo} onActive={actions.setVehicleActive} />
+              </li>
             ))}
-          <div className="text-[11px] text-wp-muted">
-            One brand and one district per trip, at most two trips per vehicle, Fresh within 270 min from 03:30,
-            Style and Tech within 480 min, weight and volume, refrigeration, van-only outlets and weekly fuel.
-          </div>
-        </section>
-      </div>
+          </ul>
+        )}
+      </section>
+
+      <p className="text-[11px] text-wp-muted">
+        Rules checked on every change: one brand and one district per trip · at most two trips per vehicle · Fresh within
+        270 min from 03:30 · Style and Tech within 480 min · weight and volume · chilled only in refrigerated vehicles ·
+        van-only outlets only by vans · delivery and mall windows · weekly fuel · vehicles in the workshop stay out.
+      </p>
+
+      {moving && (
+        <MoveDialog moving={moving} plan={plan} busy={busy} onClose={() => setMoving(null)}
+                    onMove={async (vehicleId, seq) => {
+                      const result = await actions.move(moving.order_id, vehicleId, seq);
+                      if (result.ok) setMoving(null);
+                      return result.ok ? null : result.message;
+                    }} />
+      )}
     </Page>
   );
 }
 
-function Lane({
-  vehicle,
-  routes,
-  picked,
+/** Pick a vehicle and trip for one order. Options that break a rule we can see are shown with the reason. */
+function MoveDialog({
+  moving,
+  plan,
   busy,
-  released,
-  onPick,
+  onClose,
   onMove,
-  onActive,
 }: {
-  vehicle: Vehicle;
-  routes: Route[];
-  picked: Picked | null;
+  moving: Moving;
+  plan: PlanView;
   busy: boolean;
-  released: boolean;
-  onPick: (p: Picked | null) => void;
-  onMove: (vehicleId: number, seq: 1 | 2) => Promise<void>;
-  onActive: (vehicleId: number, active: boolean) => Promise<unknown>;
+  onClose: () => void;
+  onMove: (vehicleId: number, seq: 1 | 2) => Promise<string | null>;
 }) {
-  const block = picked ? quickBlock(picked, vehicle) : null;
-  const heaviest = routes.reduce<Route | null>((a, r) => (!a || r.weight_pct > a.weight_pct ? r : a), null);
+  const [error, setError] = useState<string | null>(null);
+
+  type Option = { vehicle: Vehicle; seq: 1 | 2; ok: boolean; text: string; free: number };
+  const options: Option[] = [];
+  /** Vehicles that can never take this order, grouped by the rule (shown as one line each). */
+  const blocked = new Map<string, string[]>();
+  for (const v of plan.vehicles) {
+    const block = quickBlock(moving, v);
+    if (block) {
+      blocked.set(block, [...(blocked.get(block) ?? []), v.source_id]);
+      continue;
+    }
+    for (const seq of [1, 2] as const) {
+      const trip = plan.routes.find((r) => r.vehicle_id === v.vehicle_id && r.route_seq === seq);
+      if (trip?.route_id === moving.from_route) continue;
+      if (!trip) {
+        const other = plan.routes.find((r) => r.vehicle_id === v.vehicle_id);
+        if (seq === 2 && !other) continue; // offer trip 1 first on an unused vehicle
+        options.push({ vehicle: v, seq, ok: true, text: `New trip ${seq}${other ? ` after ${formatTime(other.return_at)}` : ""}`, free: Number(v.max_weight_kg) });
+        continue;
+      }
+      if (trip.brand_code !== moving.brand || trip.district_name !== moving.district) {
+        options.push({ vehicle: v, seq, ok: false, text: `Trip ${seq} goes to ${trip.district_name} with another ${trip.brand_code === moving.brand ? "district" : "brand"}`, free: -1 });
+        continue;
+      }
+      const freeKg = Number(trip.max_weight_kg) - Number(trip.weight_kg);
+      const freeM3 = Number(trip.max_volume_m3) - Number(trip.volume_m3);
+      const fits = freeKg >= moving.kg && freeM3 >= moving.m3;
+      options.push({ vehicle: v, seq, ok: fits, free: freeKg,
+                     text: fits ? `Join trip ${seq} (${trip.stops.length} stops) · ${Math.round(freeKg)} kg free` : `Trip ${seq} is full (${Math.round(freeKg)} kg / ${freeM3.toFixed(1)} m³ free)` });
+    }
+  }
+  options.sort((a, b) => Number(b.ok) - Number(a.ok) || b.free - a.free);
+
   return (
-    <div className={cn("rounded-lg border border-wp-border bg-wp-surface p-3", block && "opacity-55")}>
-      <div className={cn(LANE_COLUMNS, "items-center")}>
-        <div>
-          <div className="text-[15px] font-semibold">{vehicle.source_id}</div>
-          <div className="text-[11px] text-wp-text-2">{vehicle.class} · {vehicle.code}</div>
-          {!vehicle.active && <StatusPill state="offline">In workshop</StatusPill>}
+    <div role="dialog" aria-modal="true" aria-labelledby="move-title" className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
+         onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-[560px] flex-col rounded-t-xl bg-wp-surface shadow-xl sm:rounded-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-3 border-b border-wp-border p-4">
+          <div className="flex-1">
+            <h2 id="move-title" className="text-[16px] font-bold">Put {moving.label} on a trip</h2>
+            <div className="text-[12px] text-wp-text-2">
+              {moving.kg} kg · {moving.m3} m³ · {BRAND_NAME[moving.brand]} {moving.district}
+              {moving.temp === "chilled" ? " · needs a refrigerated vehicle" : ""}{moving.van_only ? " · van-only outlet" : ""}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="cursor-pointer rounded p-1 hover:bg-wp-surface-2"><X className="size-4" /></button>
         </div>
-        <div className="relative h-10">
-          <div className="absolute inset-x-0 top-5 h-0.5 bg-wp-border" />
-          <div className="absolute top-1 bottom-0 border-l-2 border-dashed border-wp-action" style={{ left: `${((8 * 60 - BAR_START) / (BAR_END - BAR_START)) * 100}%` }} />
-          {routes.map((r) =>
-            r.stops.map((stop) => (
-              <div key={stop.stop_id} title={`Trip ${r.route_seq} · ${stop.outlet_code} ${formatTime(stop.planned_arrival)}`}
-                   className="absolute top-[15px] -ml-[5px] size-2.5 rounded-full bg-wp-text-2" style={{ left: barLeft(stop.planned_arrival) }} />
-            )),
-          )}
-        </div>
-        <div className="flex flex-col gap-1">
-          {heaviest ? (
-            <>
-              <CapacityGauge label="Weight" value={Math.round(Number(heaviest.weight_pct))} />
-              <CapacityGauge label="Volume" value={Math.round(Number(heaviest.volume_pct))} />
-              <div className="text-[11px] text-wp-muted">Fullest trip · {Math.round(heaviest.weight_kg)} of {Math.round(heaviest.max_weight_kg)} kg</div>
-            </>
-          ) : (
-            <div className="text-[11px] text-wp-muted">{Number(vehicle.max_weight_kg)} kg · {Number(vehicle.max_volume_m3)} m³ per trip</div>
-          )}
-        </div>
-        <div className="font-semibold">{vehicle.fuel_left_l !== null ? `${Math.round(Number(vehicle.fuel_left_l))} L` : "—"}</div>
-      </div>
-
-      {routes.sort((a, b) => a.route_seq - b.route_seq).map((r) => (
-        <div key={r.route_id} className="mt-2 flex flex-wrap items-center gap-2 border-t border-wp-border pt-2 text-[11px]">
-          <span className="font-semibold">Trip {r.route_seq}</span>
-          <BrandMonogram brand={BRAND[r.brand_code]} outlet={r.district_name} />
-          <span className="text-wp-text-2">
-            {formatTime(r.depart_at)}–{formatTime(r.return_at)} · {r.trip_minutes} min · {Math.round(r.weight_kg)} kg · {Number(r.volume_m3).toFixed(1)} m³
-          </span>
-          {r.stops.map((stop) => (
-            <span key={stop.stop_id} className="flex items-center gap-1">
-              <span className="text-wp-muted">→</span>
-              {(stop.orders ?? []).map((o) => (
-                <button
-                  key={o.order_id}
-                  type="button"
-                  disabled={released}
-                  title={released ? undefined : "Pick up this order to move it"}
-                  onClick={() => onPick({ order_id: o.order_id, label: `${stop.outlet_code} ${o.temp}`, temp: o.temp,
-                                          van_only: stop.van_only, kg: Number(o.kg), m3: Number(o.m3) })}
-                  className={cn("rounded border px-1.5 py-0.5 font-semibold", released ? "border-wp-border" : "cursor-pointer border-wp-border hover:border-wp-action",
-                                picked?.order_id === o.order_id && "border-wp-action bg-wp-info-tint")}
-                >
-                  {stop.outlet_code}{o.temp === "chilled" ? " ❄" : ""} {formatTime(stop.planned_arrival)}
-                </button>
-              ))}
-            </span>
+        {error && <div role="alert" className="mx-4 mt-3 rounded-md bg-wp-crit-tint px-3 py-2 text-wp-crit">{error}</div>}
+        {!options.some((o) => o.ok) && (
+          <div className="mx-4 mt-3 rounded-md bg-wp-warn-tint px-3 py-2 font-semibold text-wp-warn">
+            ▲ No vehicle can take it today without breaking a rule, so deferring it is unavoidable.
+          </div>
+        )}
+        <ul className="flex-1 overflow-y-auto p-2">
+          {options.map((o) => (
+            <li key={`${o.vehicle.vehicle_id}-${o.seq}`}>
+              <button type="button" disabled={!o.ok || busy}
+                      onClick={async () => setError(await onMove(o.vehicle.vehicle_id, o.seq))}
+                      className={cn("flex w-full items-center gap-3 rounded-md px-3 py-2 text-left",
+                                    o.ok ? "cursor-pointer hover:bg-wp-info-tint" : "cursor-not-allowed opacity-55")}>
+                <span className="w-20 font-bold">{o.vehicle.source_id}</span>
+                <span className="flex-1">
+                  <span className={o.ok ? "font-semibold" : ""}>{o.text}</span>
+                  <span className="block text-[11px] text-wp-muted">{o.vehicle.class}</span>
+                </span>
+                {o.ok && <span className="text-[12px] font-semibold text-wp-focus">Choose</span>}
+              </button>
+            </li>
           ))}
+          {[...blocked].map(([reason, ids]) => (
+            <li key={reason} className="flex gap-3 px-3 py-2 opacity-70">
+              <span className="w-20 flex-none font-bold">{ids.length} {ids.length === 1 ? "vehicle" : "vehicles"}</span>
+              <span className="flex-1">
+                <span className="font-semibold">{reason}</span>
+                <span className="block text-[11px] text-wp-muted">{ids.join(", ")}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="border-t border-wp-border p-3 text-[11px] text-wp-muted">
+          The server re-checks every rule (time budgets, windows, fuel) and refuses the move with the reason if one breaks.
         </div>
-      ))}
+      </div>
+    </div>
+  );
+}
 
-      {picked && !released && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {block ? (
-            <span className="text-xs font-semibold text-wp-crit">⊘ {block}</span>
-          ) : (
-            ([1, 2] as const).map((seq) => (
-              <Button key={seq} variant="secondary" disabled={busy} onClick={() => void onMove(vehicle.vehicle_id, seq)}>
-                Put on trip {seq}
-              </Button>
-            ))
-          )}
-        </div>
-      )}
-      {!picked && !released && routes.length === 0 && (
-        <div className="mt-2">
-          <Button variant="link" className="px-0" disabled={busy} onClick={() => void onActive(vehicle.vehicle_id, !vehicle.active)}>
-            {vehicle.active ? "Mark as in the workshop" : "Back in service"}
-          </Button>
-        </div>
-      )}
+function Stat({ label, value, tone, onClick }: { label: string; value: ReactNode; tone?: "warn" | "crit" | "good"; onClick?: () => void }) {
+  const body = (
+    <>
+      <div className="text-[10px] font-semibold tracking-[.06em] text-wp-muted uppercase">{label}</div>
+      <div className={cn("text-[20px] leading-6 font-bold", tone === "warn" && "text-wp-warn", tone === "crit" && "text-wp-crit", tone === "good" && "text-wp-good")}>
+        {value}
+      </div>
+    </>
+  );
+  const className = "rounded-lg border border-wp-border bg-wp-surface px-3 py-2 text-left";
+  return onClick ? (
+    <button type="button" onClick={onClick} className={cn(className, "cursor-pointer hover:border-wp-focus")}>{body}</button>
+  ) : (
+    <div className={className}>{body}</div>
+  );
+}
+
+function Title({ date, subtitle }: { date: string; subtitle: string }) {
+  return (
+    <div>
+      <h1 className="text-[22px] leading-7 font-bold">Deliveries on {formatDay(date)}</h1>
+      <div className="text-[12px] text-wp-text-2">{subtitle}</div>
     </div>
   );
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-6">{children}</div>;
+  return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
 }
