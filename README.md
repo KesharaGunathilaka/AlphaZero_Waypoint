@@ -14,23 +14,6 @@ One system, four role apps:
 
 Why each screen looks the way it does, with screenshots from a full run: [docs/ux-by-role.md](docs/ux-by-role.md).
 
-## Try it online
-
-**Live app: https://alpha-zero-waypoint.vercel.app**
-
-Sign in with one of the demo e-mails from [Sign in](#sign-in) and the password **`<demo password>`**
-(the online app uses Clerk, so this password differs from the Docker one). If you are asked to choose
-a depot, pick **Waypoint**. The first request after a quiet period can take a few seconds while the
-database wakes up.
-
-| Part | Address |
-|---|---|
-| Web app | https://alpha-zero-waypoint.vercel.app |
-| API health check | https://alphazero-waypoint-api-pink.vercel.app/health |
-
-The online app has no *Reset demo* or *Simulate no signal* controls (see the walkthrough below); to try
-those, run the Docker delivery.
-
 ## Run it (Docker)
 
 Needs Docker Desktop. Nothing else: the database, the seed data and the sign-in are all inside.
@@ -67,8 +50,7 @@ tap one to sign in. All use the password **`waypoint-demo`**.
 The database also holds an `admin@example.com` account (demo reset places the seed orders as it); it is
 not listed on the sign-in page because it has no depot, vehicle or outlet of its own.
 
-The deployed app uses Clerk for sign-in instead (`AUTH_MODE=clerk`), with the same e-mails and its own
-password; see [Try it online](#try-it-online) and [Deploy](#deploy).
+The deployed app uses Clerk for sign-in instead (`AUTH_MODE=clerk`); see [Deploy](#deploy).
 
 ## Walk through a delivery day (about 10 minutes)
 
@@ -100,8 +82,7 @@ the dispatcher switches to Peliyagoda with the depot selector in the header.
 
 *Reset demo* (dispatcher header) wipes the day and seeds a fresh one. *Reset demo* and the driver's
 *Simulate no signal* are demo controls: they exist only with local sign-in (this Docker delivery); the
-deployed app (Clerk) hides them and its API refuses the reset. The deployed demo day is reset with
-`db/load.sh --demo` ([docs/deploy.md](docs/deploy.md#21-neon-database)).
+deployed app (Clerk) hides them and its API refuses the reset.
 
 ## The rules (Challenge Booklet) and where they are enforced
 
@@ -151,15 +132,13 @@ Frontend: `cd frontend && pnpm lint && npx tsc --noEmit`.
 
 ## Deploy
 
-All on free plans: Neon Free, Vercel Hobby, Clerk Development instance.
-
 | Part | Where | Settings |
 |---|---|---|
-| Database | Neon, Singapore region | `./db/load.sh "<direct URL>"` once; `--migrate` after schema changes; `--demo` to reset |
-| Photos | In the database (`STORAGE_BACKEND=db`) | nothing extra |
-| API | Vercel project, Root Directory `backend`, region Singapore | https://alphazero-waypoint-api-pink.vercel.app · variables in [docs/deploy.md §2.3](docs/deploy.md#23-vercel-api-project) |
-| Web | Vercel project, Root Directory `frontend`, region Singapore | https://alpha-zero-waypoint.vercel.app · variables in [docs/deploy.md §2.4](docs/deploy.md#24-vercel-web-project) |
-| Sign-in | Clerk organization, roles `dispatcher` · `loader` · `driver` · `store_manager`; Device Trust off | users with the demo e-mails above |
+| Database | Neon (PostgreSQL 18) | `./db/load.sh "$NEON_DATABASE_URL"` once; `--migrate` after schema changes |
+| Photos | Neon object storage (S3 API) | in the API's variables |
+| API | Vercel, Root Directory `backend` | *Deployed* section of [`backend/.env.example`](backend/.env.example) |
+| Web | Vercel, Root Directory `frontend` | *Deployed* section of [`frontend/.env.example`](frontend/.env.example) |
+| Sign-in | Clerk organization, roles `dispatcher` · `loader` · `driver` · `store_manager` | users with the demo e-mails above |
 
 Step by step, with the checks after each deployment: [docs/deploy.md](docs/deploy.md).
 
@@ -173,9 +152,3 @@ data/general/   the seven General Data CSVs (the only competition data in the re
 docs/       deploy guide, database, API, UX by role (+ screenshots)
 docker-compose.yml, .env.example   Docker delivery (docker compose up)
 ```
-
-## AI assistance
-
-Parts of this project were written with an AI coding assistant (GitHub Copilot): schema
-review against the booklet, the allocation engine, API endpoints, frontend wiring, tests and
-documentation. Every change was reviewed, run and tested by the team; design decisions are the team's.
