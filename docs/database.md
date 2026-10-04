@@ -7,7 +7,7 @@ PostgreSQL **18** everywhere (Neon runs 18; Docker uses `postgres:18-alpine`). A
 | `db/waypoint_schema.sql` | Creates schema `wp`: tables, relationships, the booklet's rules (triggers + `plan_violations()`), workflow functions, views, roles, and fixed reference rows not in the CSVs (brands, depots, vehicle classes, proof rule, reason codes). Run **once** on an empty database. |
 | `db/waypoint_import.sql` | Loads the 7 CSVs in `data/general/`. Safe to run again (updates rows in place). |
 | `db/init/10-load-waypoint.sh` | Runs both automatically inside the Docker `db` container on its first start. |
-| `db/migrations/*.sql` | Changes after the base schema (001: driver per vehicle, photo storage, `demo_reset()`; 002: a run closed early counts as past its cutoff). Safe to re-run. |
+| `db/migrations/*.sql` | Changes after the base schema (001: driver per vehicle, photo storage, `demo_reset()`; 002: a run closed early counts as past its cutoff; 003: Sri Lanka time; 004: demo e-mails; 005: the planning office sees both depots). Safe to re-run. |
 | `db/load.sh` | Runs all of it against any database URL (Neon). |
 
 ## Local: Docker

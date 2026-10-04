@@ -1,0 +1,381 @@
+<title>Waypoint Delivery Day</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a numbered walkthrough (the order is the real order of the day). Each step = header, short notes,
+   rules proven, then its screenshots (phones in a row, desktops full width). Colours are Waypoint's own tokens. */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --surface-2: #e9edf3; --border: #c9d1dc;
+  --text: #121c2b; --text-2: #40506a; --muted: #5a6a82; --action: #17375e; --on-action: #ffffff;
+  --good: #0b6b2e; --good-tint: #e2f3e8; --warn: #804a00; --warn-tint: #ffefcc; --crit: #b3261e; --crit-tint: #fce4e2;
+  --info: #1d559b; --info-tint: #e3edfb;
+  --store: #b03a78; --dispatch: #17375e; --loader: #4a5568; --driver: #2a78d6;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0c131d; --surface: #152030; --surface-2: #1e2c40; --border: #34445e; --text: #f1f5f9; --text-2: #bac6d6; --muted: #97a5ba;
+    --action: #9cc3f5; --on-action: #0c131d; --good: #6fd69a; --good-tint: #12351f; --warn: #f5b942; --warn-tint: #3a2a08;
+    --crit: #ff9a92; --crit-tint: #431a18; --info: #8db8f2; --info-tint: #172c4a;
+    --store: #e07ab0; --dispatch: #9cc3f5; --loader: #b5c0cf; --driver: #6aa8f0; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c131d; --surface: #152030; --surface-2: #1e2c40; --border: #34445e; --text: #f1f5f9; --text-2: #bac6d6; --muted: #97a5ba;
+  --action: #9cc3f5; --on-action: #0c131d; --good: #6fd69a; --good-tint: #12351f; --warn: #f5b942; --warn-tint: #3a2a08;
+  --crit: #ff9a92; --crit-tint: #431a18; --info: #8db8f2; --info-tint: #172c4a;
+  --store: #e07ab0; --dispatch: #9cc3f5; --loader: #b5c0cf; --driver: #6aa8f0; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1200px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 72px; display: flex; flex-direction: column; gap: 36px; }
+h1, h2, h3 { margin: 0; line-height: 1.2; text-wrap: balance; }
+p { margin: 0; }
+ul { margin: 0; padding-left: 20px; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+code { font-family: var(--font-mono); font-size: 12px; background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+
+.intro { display: grid; gap: 12px; }
+.intro h1 { font-size: clamp(28px, 4.2vw, 40px); font-weight: 800; }
+.intro p { max-width: 75ch; color: var(--text-2); }
+.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.result { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: grid; gap: 2px; }
+.result b { font-size: 22px; color: var(--good); font-variant-numeric: tabular-nums; }
+.result span { font-size: 13px; color: var(--text-2); }
+.notes { background: var(--info-tint); color: var(--text); border-radius: 10px; padding: 12px 16px; font-size: 14px; display: grid; gap: 4px; }
+.notes b { color: var(--info); }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; }
+nav.toc a { text-decoration: none; color: var(--action); font-weight: 600; font-size: 13px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--action); outline: none; }
+
+section.step { display: grid; gap: 14px; scroll-margin-top: 12px; }
+.step-head { display: flex; gap: 14px; align-items: flex-start; border-top: 2px solid var(--text); padding-top: 14px; }
+.num { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--action); color: var(--on-action); display: grid; place-items: center; font-weight: 800; font-size: 17px; }
+.step-head h2 { font-size: 23px; font-weight: 800; }
+.who { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.role { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; color: var(--surface); }
+.role.store { background: var(--store); } .role.dispatch { background: var(--dispatch); } .role.loader { background: var(--loader); } .role.driver { background: var(--driver); }
+.role.system { background: var(--muted); }
+.device { font-size: 12px; color: var(--muted); align-self: center; }
+.body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+.what { font-size: 14.5px; color: var(--text); }
+.what li + li { margin-top: 4px; }
+.rules { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: grid; gap: 6px; align-content: start; }
+.rules .eyebrow { color: var(--good); }
+.rules ul { list-style: none; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.rules li::before { content: "✓ "; color: var(--good); font-weight: 700; }
+.shots { display: grid; gap: 14px; }
+.shots.phones { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); align-items: start; }
+.shots.tablets { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); align-items: start; }
+.shots.wide { grid-template-columns: 1fr; }
+.shots.wide.two { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+figure a { display: block; }
+figure img { width: 100%; height: auto; display: block; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); }
+figcaption { font-size: 12.5px; color: var(--text-2); }
+figcaption b { color: var(--text); }
+
+.index { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 13.5px; }
+th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+thead th { border-top: 0; background: var(--surface-2); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+td a { color: var(--action); font-weight: 600; }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 14px; }
+@media (max-width: 760px) {
+  .body { grid-template-columns: 1fr; }
+  .shots.wide.two { grid-template-columns: 1fr; }
+  .shots.phones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="eyebrow">Waypoint · Team AlphaZero · end-to-end test, Sun 4 Oct 2026</div>
+    <h1>One delivery day, every role, both depots</h1>
+    <p>Store managers order, the 16:00 cutoff locks the day, the dispatcher plans Kandy and Peliyagoda, loaders load, drivers deliver (with and without signal), the dispatcher watches both depots, stores confirm what arrived, and the day closes with every order accounted for and fuel counted. Deliveries are for Tue 6 Oct; the next day (Wed 7 Oct) is planned at the end.</p>
+    <div class="results" aria-label="Automated test results">
+      <div class="result"><b>114 / 114</b><span><code>day_scenario.py</code>: this whole day through the API, both depots, every role</span></div>
+      <div class="result"><b>116 / 116</b><span><code>rules_audit.py</code>: every booklet rule recomputed from the CSVs; every way to break one refused</span></div>
+      <div class="result"><b>All steps</b><span><code>walkthrough.py</code>: four roles, offline sync, retries, corrections, photo links</span></div>
+      <div class="result"><b>55 trips</b><span>23 Kandy + 32 Peliyagoda, 186 orders, run to the end of the day</span></div>
+    </div>
+    <div class="notes">
+      <div><b>How the screenshots were made.</b> The production Docker build with local sign-in, captured in headless Edge at real device sizes: phone 390 px, dock tablet 820 px, office 1280 px.</div>
+      <div><b>The cutoff.</b> The app runs on the real clock. "Close orders now" stands in for 16:00; the 16:00 rule itself (15:59 vs 16:00:01, Sundays) is checked on the clock by the test suite.</div>
+      <div><b>The other 54 trips.</b> VEH057 was loaded and driven by hand on screen. The rest ran through the same API calls the loader tablets and driver phones make, signed in as a test driver per vehicle ("Test driver VEH008").</div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Steps">
+    <a href="#s1">1 Sign in</a><a href="#s2">2 Stores order</a><a href="#s3">3 16:00 cutoff</a><a href="#s4">4 Plan Kandy</a>
+    <a href="#s5">5 Plan Peliyagoda</a><a href="#s6">6 Loader</a><a href="#s7">7 Driver</a><a href="#s8">8 Live, both depots</a>
+    <a href="#s9">9 Stores confirm</a><a href="#s10">10 End of the day</a><a href="#s11">11 Next day</a><a href="#index">Every rule</a>
+  </nav>
+
+  <section class="step" id="s1">
+    <div class="step-head"><div class="num">1</div><div><h2>Sign in</h2><div class="who"><span class="role system">All roles</span><span class="device">Docker: no outside account needed</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>Each person signs in to their own app: dispatcher, loader, driver, store manager.</li>
+        <li>The dispatcher works in the planning office and covers <b>both depots</b>; loaders and drivers are tied to one depot or vehicle; a store manager sees one outlet.</li>
+        <li>The deployed site uses Clerk; the Docker delivery uses this local sign-in (password <code>waypoint-demo</code>).</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul><li>A wrong password, a forged session or no session is refused</li><li>A driver who opens the dispatcher app is sent to the driver app</li></ul></div>
+    </div>
+    <div class="shots wide"><figure><a href="img/01-sign-in.jpg" target="_blank" rel="noopener"><img src="img/01-sign-in.jpg" alt="Sign-in page with an email and password form and the demo accounts for every role" loading="lazy"></a></figure></div>
+  </section>
+
+  <section class="step" id="s2">
+    <div class="step-head"><div class="num">2</div><div><h2>Store managers order: Fresh, Style, Tech, two depots</h2><div class="who"><span class="role store">Store manager</span><span class="device">Phone at the counter · office PC</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li><b>Fresh Kandy OUT077</b> (van-only street outlet) repeats its usual dry-groceries order and gets a confirmation number at once.</li>
+        <li><b>Style Matale OUT102</b> orders from the office PC; <b>Tech Matale OUT103</b> from a phone; <b>Style Colombo OUT018</b> and <b>Tech Colombo OUT022</b> are mall outlets of Peliyagoda.</li>
+        <li>Every order shows "Received" and the cutoff it closes at; a second order of the same kind becomes "Order placed · view".</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Fresh orders dry and chilled separately; Style and Tech have no chilled option</li>
+        <li>A Tech outlet cannot order Fresh products (refused)</li>
+        <li>One order per kind per day; a retry returns the same order</li>
+        <li>A store cannot open another outlet's order</li>
+        <li>Before the cutoff an order can be changed</li></ul></div>
+    </div>
+    <div class="shots phones">
+      <figure><a href="img/02-store-home.jpg" target="_blank" rel="noopener"><img src="img/02-store-home.jpg" alt="OUT077 deliveries with the next order closing Monday 16:00" loading="lazy"></a><figcaption><b>OUT077 Deliveries.</b> The next dry order closes Mon 5 Oct 16:00.</figcaption></figure>
+      <figure><a href="img/03-store-order-placed.jpg" target="_blank" rel="noopener"><img src="img/03-store-order-placed.jpg" alt="Order placed with confirmation number" loading="lazy"></a><figcaption><b>Confirmation number</b> straight away: no more "did they get my call?"</figcaption></figure>
+      <figure><a href="img/05-store-tech-phone.jpg" target="_blank" rel="noopener"><img src="img/05-store-tech-phone.jpg" alt="Tech outlet order form with refrigerator, small appliances and TV" loading="lazy"></a><figcaption><b>Tech Matale OUT103</b> on a phone: appliances only.</figcaption></figure>
+      <figure><a href="img/06-store-tech-mall-received.jpg" target="_blank" rel="noopener"><img src="img/06-store-tech-mall-received.jpg" alt="Tech Colombo mall outlet with order received and order placed view" loading="lazy"></a><figcaption><b>Tech Colombo OUT022</b> (mall, Peliyagoda): received; no second order possible.</figcaption></figure>
+    </div>
+    <div class="shots wide"><figure><a href="img/04-store-style-desktop.jpg" target="_blank" rel="noopener"><img src="img/04-store-style-desktop.jpg" alt="Style outlet ordering garments on the office PC" loading="lazy"></a><figcaption><b>Style Matale OUT102</b> on the office PC: garments, pre-filled from the usual order; no chilled tab.</figcaption></figure></div>
+  </section>
+
+  <section class="step" id="s3">
+    <div class="step-head"><div class="num">3</div><div><h2>16:00: orders lock, later orders go to the next day</h2><div class="who"><span class="role dispatch">Dispatcher</span><span class="role store">Store manager</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>73 Kandy orders are in. Closing confirms them and opens planning (normally automatic at 16:00 the operating day before).</li>
+        <li>OUT102's order is now <b>locked</b>: "call dispatch to change it" instead of a button that does nothing.</li>
+        <li>OUT077 orders chilled goods after the close: it goes to <b>Wed 7 Oct</b>, and the screen says the Tue 6 Oct run has closed.</li>
+        <li>Peliyagoda's run is still open: each depot's cutoff is its own.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Ordered 15:59 Mon → delivered Tue; 16:00:01 Mon → Wed</li>
+        <li>Monday's cutoff is Saturday 16:00 (Sunday is not an operating day)</li>
+        <li>No delivery is ever planned for a Sunday</li>
+        <li>A closed order cannot change (refused)</li>
+        <li>An order after the cutoff joins the next run</li></ul></div>
+    </div>
+    <div class="shots wide two">
+      <figure><a href="img/07-dispatcher-orders-open.jpg" target="_blank" rel="noopener"><img src="img/07-dispatcher-orders-open.jpg" alt="Dispatcher before the cutoff: 73 placed, step 1 Close orders" loading="lazy"></a><figcaption><b>Before:</b> 73 placed, stores can order until Mon 16:00.</figcaption></figure>
+      <figure><a href="img/08-dispatcher-orders-closed.jpg" target="_blank" rel="noopener"><img src="img/08-dispatcher-orders-closed.jpg" alt="Dispatcher after closing: 73 confirmed, next step Build the plan" loading="lazy"></a><figcaption><b>After:</b> 73 confirmed. Nothing is "deferred" yet; the next step is Build the plan.</figcaption></figure>
+    </div>
+    <div class="shots phones">
+      <figure><a href="img/09-store-order-locked.jpg" target="_blank" rel="noopener"><img src="img/09-store-order-locked.jpg" alt="Style store with order locked at the cutoff" loading="lazy"></a><figcaption><b>OUT102:</b> locked at the cutoff; the next order is for Wed 7 Oct.</figcaption></figure>
+      <figure><a href="img/10-store-late-order-next-day.jpg" target="_blank" rel="noopener"><img src="img/10-store-late-order-next-day.jpg" alt="OUT077 with Tuesday orders locked and a chilled order for Wednesday" loading="lazy"></a><figcaption><b>OUT077:</b> Tuesday's orders locked; the late chilled order is for Wed 7 Oct.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s4">
+    <div class="step-head"><div class="num">4</div><div><h2>The dispatcher plans Kandy</h2><div class="who"><span class="role dispatch">Dispatcher</span><span class="device">Planning office · 1280 px</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li><b>Build the plan:</b> the engine puts 70 of 73 orders on 23 trips with <b>0 rule problems</b>.</li>
+        <li>VEH057 (refrigerated van) runs the Day 5 example: OUT077 → OUT083 → OUT079 at 99% of its weight.</li>
+        <li>3 chilled orders cannot go. <b>Try to fit</b> proves it for OUT078: both VEH057 trips are full, 5 trucks cannot reach a van-only outlet, VEH058 is in the workshop, 15 vehicles cannot carry chilled goods.</li>
+        <li>Each deferral already has the reason the store will read. <b>Send plan to depot</b>: loaders and drivers get their trips, the 3 stores are told.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here (every trip, recomputed from the CSVs)</div><ul>
+        <li>One brand and one district per trip; whole orders</li>
+        <li>Weight and volume within each vehicle's limits</li>
+        <li>Chilled only on refrigerated vehicles; van-only outlets only by vans</li>
+        <li>Home depot only; at most two trips per vehicle; workshop vehicles unused</li>
+        <li>Trip minutes = outbound + inter-stop × (orders − 1) + handling</li>
+        <li>Fresh ≤ 270 min from 03:30; Style + Tech ≤ 480 min; delivery windows</li>
+        <li>No deferral was avoidable; "Other" needs a note; a chilled order on a dry truck is refused</li></ul></div>
+    </div>
+    <div class="shots wide">
+      <figure><a href="img/11-kandy-plan-built.jpg" target="_blank" rel="noopener"><img src="img/11-kandy-plan-built.jpg" alt="Kandy plan built: 23 trips, 70 of 73 orders, 3 deferred with reasons" loading="lazy"></a><figcaption><b>Plan built:</b> 70 / 73 on trips, 3 deferred with reasons, 0 rule problems; one main button: Send plan to depot.</figcaption></figure>
+    </div>
+    <div class="shots wide two">
+      <figure><a href="img/12-kandy-trip-detail.jpg" target="_blank" rel="noopener"><img src="img/12-kandy-trip-detail.jpg" alt="VEH057 trip 1 opened with stops and arrival times" loading="lazy"></a><figcaption><b>VEH057 trip 1:</b> 76 min, 1,030 of 1,040 kg, arrivals inside each window.</figcaption></figure>
+      <figure><a href="img/13-kandy-why-deferred.jpg" target="_blank" rel="noopener"><img src="img/13-kandy-why-deferred.jpg" alt="Try to fit dialog listing why no vehicle can take OUT078" loading="lazy"></a><figcaption><b>Why it can't go:</b> every vehicle and the rule that blocks it.</figcaption></figure>
+      <figure><a href="img/14-kandy-deferred-tab.jpg" target="_blank" rel="noopener"><img src="img/14-kandy-deferred-tab.jpg" alt="Deferred tab with three orders and saved reasons" loading="lazy"></a><figcaption><b>Deferred:</b> reasons saved, last five runs, Try to fit.</figcaption></figure>
+      <figure><a href="img/15-kandy-plan-sent.jpg" target="_blank" rel="noopener"><img src="img/15-kandy-plan-sent.jpg" alt="Plan v1 sent to loaders and drivers, 3 stores told" loading="lazy"></a><figcaption><b>Sent:</b> plan v1 to the depot; 3 stores told about their deferred order.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s5">
+    <div class="step-head"><div class="num">5</div><div><h2>Same office, other depot: Peliyagoda</h2><div class="who"><span class="role dispatch">Dispatcher</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>The depot selector switches every tab to Peliyagoda. Close orders, build: <b>113 of 116 orders on 32 trips, 0 rule problems</b>.</li>
+        <li>3 chilled orders wait for refrigerated capacity, each with its reason.</li>
+        <li>The Tech mall trip reaches OUT022 at 10:00 and OUT021 at 11:03, inside their 10:00–12:00 mall window.</li>
+        <li>Send, then back to Kandy.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>The same rule audit on all 32 Peliyagoda trips; no avoidable deferral</li>
+        <li>Mall outlets served inside the mall's fixed access window</li>
+        <li>Planning is one depot at a time: a Kandy plan does not open while working on Peliyagoda</li>
+        <li>A single-depot dispatcher and a loader cannot switch depot</li></ul></div>
+    </div>
+    <div class="shots wide two">
+      <figure><a href="img/16-peliyagoda-plan-built.jpg" target="_blank" rel="noopener"><img src="img/16-peliyagoda-plan-built.jpg" alt="Peliyagoda plan built: 113 of 116, 32 trips" loading="lazy"></a><figcaption><b>Peliyagoda:</b> 113 / 116 on 32 trips, 21 of 38 vehicles.</figcaption></figure>
+      <figure><a href="img/17-peliyagoda-mall-trips.jpg" target="_blank" rel="noopener"><img src="img/17-peliyagoda-mall-trips.jpg" alt="Tech Colombo mall trip with arrivals 10:00 and 11:03" loading="lazy"></a><figcaption><b>Mall trip:</b> OUT022 10:00, OUT021 11:03 (mall bay).</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s6">
+    <div class="step-head"><div class="num">6</div><div><h2>The loader loads VEH057, flags a shortfall, releases it</h2><div class="who"><span class="role loader">Loader</span><span class="device">Shared dock tablet, portrait</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>Vehicles in departure order. VEH057 trip 1 loads <b>last stop first</b> (stop 3, OUT079).</li>
+        <li>Chilled chicken is 2 packs short: <b>Flag → Short → 2 → Send flag</b>. Loading carries on; the dispatcher has it at once.</li>
+        <li>Departure check: 3 of 3 stops, 18 of 18 lines, the shortfall in large type, 99% of weight. Release is signed with the loader's own sign-in.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Each loader sees only their depot's trips (Kandy 23, Peliyagoda 32)</li>
+        <li>Load order is last stop first on every trip</li>
+        <li>Every line confirmed and every vehicle released (239 events)</li>
+        <li>A driver can never hand over more than was loaded</li></ul></div>
+    </div>
+    <div class="shots tablets">
+      <figure><a href="img/19-loader-vehicles.jpg" target="_blank" rel="noopener"><img src="img/19-loader-vehicles.jpg" alt="Loader vehicle list in departure order" loading="lazy"></a><figcaption><b>Vehicles</b> in departure order.</figcaption></figure>
+      <figure><a href="img/20-loader-flag.jpg" target="_blank" rel="noopener"><img src="img/20-loader-flag.jpg" alt="Flag sheet: Short by 2" loading="lazy"></a><figcaption><b>Flag a line:</b> Missing, Short or Damaged.</figcaption></figure>
+      <figure><a href="img/21-loader-flag-sent.jpg" target="_blank" rel="noopener"><img src="img/21-loader-flag-sent.jpg" alt="Load list with the flagged chicken line" loading="lazy"></a><figcaption><b>Flag sent;</b> loading continues.</figcaption></figure>
+      <figure><a href="img/22-loader-departure-check.jpg" target="_blank" rel="noopener"><img src="img/22-loader-departure-check.jpg" alt="Departure check with 2 pack short" loading="lazy"></a><figcaption><b>Departure check:</b> 2 packs short, 99% weight.</figcaption></figure>
+      <figure><a href="img/23-loader-released.jpg" target="_blank" rel="noopener"><img src="img/23-loader-released.jpg" alt="VEH057 trip 1 released to the driver" loading="lazy"></a><figcaption><b>Released</b> to the driver, signed.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s7">
+    <div class="step-head"><div class="num">7</div><div><h2>The driver runs trip 1: delivered, not delivered, no signal</h2><div class="who"><span class="role driver">Driver</span><span class="device">Own phone · 390 px</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>One big button is always the next step: <b>Start trip → I'm here → Save delivery → Next stop</b>.</li>
+        <li><b>OUT077:</b> all delivered, taken by Fathima Rizwan.</li>
+        <li><b>OUT083:</b> not delivered, "Outlet closed", with the driver's note.</li>
+        <li><b>No signal</b> (switched on in the menu): the next stop warns "Loaded short: chilled chicken (2 missing). The store knows." The delivery is <b>saved on the phone</b>, not yet sent.</li>
+        <li>Signal back: everything sends by itself. Trip 1 done: 2 delivered, 1 not delivered; trip 2 is next.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Works offline; resending a whole batch changes nothing</li>
+        <li>A correction is added beside the original, never over it</li>
+        <li>A driver sees only their own vehicle's trips</li>
+        <li>The trip is complete only when every order has a record</li></ul></div>
+    </div>
+    <div class="shots phones">
+      <figure><a href="img/24-driver-start-trip.jpg" target="_blank" rel="noopener"><img src="img/24-driver-start-trip.jpg" alt="Driver home with Start trip" loading="lazy"></a><figcaption><b>Start trip:</b> van is loaded.</figcaption></figure>
+      <figure><a href="img/25-driver-deliver-form.jpg" target="_blank" rel="noopener"><img src="img/25-driver-deliver-form.jpg" alt="Delivery form: All delivered, taken by" loading="lazy"></a><figcaption><b>Deliver:</b> all delivered, who took it.</figcaption></figure>
+      <figure><a href="img/26-driver-delivered.jpg" target="_blank" rel="noopener"><img src="img/26-driver-delivered.jpg" alt="Delivery saved and sent" loading="lazy"></a><figcaption><b>Sent</b> to dispatch and the store.</figcaption></figure>
+      <figure><a href="img/27-driver-not-delivered.jpg" target="_blank" rel="noopener"><img src="img/27-driver-not-delivered.jpg" alt="Not delivered: outlet closed with a note" loading="lazy"></a><figcaption><b>Not delivered:</b> outlet closed.</figcaption></figure>
+      <figure><a href="img/28-driver-no-signal-short-load.jpg" target="_blank" rel="noopener"><img src="img/28-driver-no-signal-short-load.jpg" alt="No signal, next stop shows loaded short warning" loading="lazy"></a><figcaption><b>No signal;</b> shortfall shown at the stop.</figcaption></figure>
+      <figure><a href="img/29-driver-saved-on-phone.jpg" target="_blank" rel="noopener"><img src="img/29-driver-saved-on-phone.jpg" alt="Saved on this phone, not sent yet" loading="lazy"></a><figcaption><b>Saved on the phone,</b> sent later.</figcaption></figure>
+      <figure><a href="img/30-driver-trip-complete.jpg" target="_blank" rel="noopener"><img src="img/30-driver-trip-complete.jpg" alt="Trip 1 done summary with Start trip 2" loading="lazy"></a><figcaption><b>Trip 1 done;</b> all sent; trip 2 next.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s8">
+    <div class="step-head"><div class="num">8</div><div><h2>The dispatcher watches both depots on one screen</h2><div class="who"><span class="role dispatch">Dispatcher</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li><b>Live · all depots:</b> one card per depot (trips departed, delivered, Fresh at risk, needs attention); filter chips for one depot.</li>
+        <li>One attention list for both, tagged by depot: OUT046 (Peliyagoda, "mall loading bay closed") and OUT083 (Kandy) not delivered; VEH057's open shortfall flag with "Send partial / Hold vehicle".</li>
+        <li><b>Move to next delivery day</b> puts each failed order into Wednesday's run with the driver's reason; the store is told the new day.</li>
+        <li>Finished trips fold away, so the list leads with what still needs watching.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Monitoring covers both depots; the depot filter shows only that depot</li>
+        <li>A failed order moves once; a delivered order cannot be moved</li>
+        <li>Planning stays one depot at a time; watching does not need to</li></ul></div>
+    </div>
+    <div class="shots wide">
+      <figure><a href="img/31-live-both-depots.jpg" target="_blank" rel="noopener"><img src="img/31-live-both-depots.jpg" alt="Live all depots with two failed deliveries and a loader flag" loading="lazy"></a><figcaption><b>Both depots, one list:</b> two failed deliveries and a shortfall flag, each tagged by depot.</figcaption></figure>
+      <figure><a href="img/36a-live-after.jpg" target="_blank" rel="noopener"><img src="img/36a-live-after.jpg" alt="Live after moving the failed deliveries, completed trips folded" loading="lazy"></a><figcaption><b>After moving them:</b> only the open flag is left; 54 completed trips folded away.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s9">
+    <div class="step-head"><div class="num">9</div><div><h2>Stores confirm what arrived</h2><div class="who"><span class="role store">Store manager</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>OUT077 opens <b>Confirm</b> (red count on the tab): ordered / driver delivered / you received, line by line.</li>
+        <li>One coconut-oil bottle is damaged: <b>Report issue → Damaged → Add</b>. Confirmed with 1 issue (IS-000010); dispatch has the record.</li>
+        <li>OUT078 sees its chilled order "Not arriving on Tuesday", why, and the new day; its dry order waits for confirmation.</li>
+        <li>The Style and Tech stores of both depots confirm too.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Disputes are settled line by line, with the driver's record beside the store's</li>
+        <li>The deferral notice carries the reason and the new date</li></ul></div>
+    </div>
+    <div class="shots phones">
+      <figure><a href="img/33-store-report-issue.jpg" target="_blank" rel="noopener"><img src="img/33-store-report-issue.jpg" alt="Confirm delivery with one damaged item" loading="lazy"></a><figcaption><b>Confirm:</b> 1 damaged, the rest matches.</figcaption></figure>
+      <figure><a href="img/34-store-receipt-sent.jpg" target="_blank" rel="noopener"><img src="img/34-store-receipt-sent.jpg" alt="Receipt confirmed with 1 issue" loading="lazy"></a><figcaption><b>Confirmed with 1 issue;</b> dispatch has it.</figcaption></figure>
+      <figure><a href="img/35-store-out078-deferred.jpg" target="_blank" rel="noopener"><img src="img/35-store-out078-deferred.jpg" alt="OUT078 not arriving on Tuesday notice" loading="lazy"></a><figcaption><b>OUT078:</b> not arriving Tuesday, coming Wednesday.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s10">
+    <div class="step-head"><div class="num">10</div><div><h2>End of the day: every order accounted for, fuel counted</h2><div class="who"><span class="role dispatch">Dispatcher</span><span class="role system">System</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>Each depot's run closes itself when every trip is done: <b>Peliyagoda 112 delivered, 1 not delivered</b>; <b>Kandy 69 delivered, 1 not delivered</b>; both "Day complete".</li>
+        <li>Fuel: each vehicle's route distance (out, between stops, back) is counted against its <b>weekly quota</b>. VEH057 used 4.3 L today; 445.7 L of 450 L left this week.</li>
+        <li>Records hold every delivery, deferral and moved order of both depots, with who decided and why; CSV export.</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Both runs complete; nothing left undelivered without a record</li>
+        <li>Fuel used this week = the day's planned route fuel, for every vehicle</li>
+        <li>No vehicle over its weekly fuel quota</li></ul></div>
+    </div>
+    <div class="shots wide">
+      <figure><a href="img/36-end-of-day.jpg" target="_blank" rel="noopener"><img src="img/36-end-of-day.jpg" alt="End of the day per depot with outcomes and fuel per vehicle" loading="lazy"></a><figcaption><b>End of the day:</b> outcomes per depot and fuel per vehicle (today, this week, quota, left).</figcaption></figure>
+      <figure><a href="img/37-records-both-depots.jpg" target="_blank" rel="noopener"><img src="img/37-records-both-depots.jpg" alt="Records with deferrals of both depots" loading="lazy"></a><figcaption><b>Records:</b> both depots, filter by depot or brand.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="step" id="s11">
+    <div class="step-head"><div class="num">11</div><div><h2>The next day serves what was carried over</h2><div class="who"><span class="role dispatch">Dispatcher</span></div></div></div>
+    <div class="body">
+      <ul class="what">
+        <li>Wed 7 Oct, Kandy: the 3 deferred orders, the failed OUT083 order and OUT077's late chilled order are <b>all on trips</b> (5 / 5, 0 rule problems).</li>
+        <li>Fuel left already counts Tuesday: VEH057 shows 444 L (450 L quota − Tuesday − Wednesday's plan).</li>
+      </ul>
+      <div class="rules"><div class="eyebrow">Proven here</div><ul>
+        <li>Deferred, failed and late orders are all served the next day</li>
+        <li>Fuel left = quota − yesterday − today's plan, to the decilitre</li>
+        <li>The next day's plan passes the same rule audit</li></ul></div>
+    </div>
+    <div class="shots wide"><figure><a href="img/38-next-day-plan.jpg" target="_blank" rel="noopener"><img src="img/38-next-day-plan.jpg" alt="Wednesday plan with 5 carried orders on 2 trips" loading="lazy"></a><figcaption><b>Wed 7 Oct:</b> 5 / 5 orders on 2 trips; VEH057 back on the van-only round.</figcaption></figure></div>
+  </section>
+
+  <section class="step" id="index" aria-labelledby="idx">
+    <div class="step-head"><div class="num">✓</div><div><h2 id="idx">Every rule, and where it was proven</h2><div class="who"><span class="device">Automated checks run on this day's data; screens show the same day</span></div></div></div>
+    <div class="index">
+      <table>
+        <thead><tr><th>Rule (Challenge Booklet)</th><th>How it is protected</th><th>Proven by</th><th>See</th></tr></thead>
+        <tbody>
+          <tr><td>One brand and one district per trip; whole orders</td><td>Database trigger + engine</td><td>Audit of all 55 trips; wrong-district move refused</td><td><a href="#s4">4</a> <a href="#s5">5</a></td></tr>
+          <tr><td>Weight and volume per trip</td><td>Checked on every assignment and before sending</td><td>Audit; over-full van refused</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Chilled only on refrigerated vehicles</td><td>Checked on every assignment</td><td>Audit; chilled-on-dry-truck refused</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Van-only outlets only by vans</td><td>Checked on every assignment</td><td>Audit; van-only-on-truck refused</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Home depot only</td><td>Database + API</td><td>Other-depot vehicle refused; loader sees one depot</td><td><a href="#s5">5</a> <a href="#s6">6</a></td></tr>
+          <tr><td>At most two trips per vehicle</td><td>Database constraint</td><td>Audit; a third trip refused</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Trip minutes = outbound + inter-stop × (orders − 1) + handling</td><td>Database function, same formula in the engine</td><td>Recomputed from the CSVs for every trip</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Fresh ≤ 270 min from 03:30; Style + Tech ≤ 480 min</td><td>Plan cannot be sent otherwise</td><td>Audit; 478-min Fresh day and 02:30 departure blocked</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Delivery and mall windows; early vehicles wait</td><td>Arrival times set by the database; checked before sending</td><td>Every arrival recomputed; mall trips inside 10:00–12:00</td><td><a href="#s5">5</a></td></tr>
+          <tr><td>Weekly fuel quota</td><td>Counted at sending, carried through the week</td><td>Used = planned per vehicle; next day = quota − used</td><td><a href="#s10">10</a> <a href="#s11">11</a></td></tr>
+          <tr><td>Workshop vehicles are not used</td><td>Refused on move; blocks sending</td><td>VEH058 never planned; move onto it refused</td><td><a href="#s4">4</a></td></tr>
+          <tr><td>Orders close 16:00 the operating day before</td><td>Order slot + run state</td><td>Clock test (15:59 / 16:00:01, Sunday); locked order refused</td><td><a href="#s3">3</a></td></tr>
+          <tr><td>Deferrals recorded with a reason; store told</td><td>Reason required; notice on sending</td><td>"Other" needs a note; notices; Records</td><td><a href="#s4">4</a> <a href="#s9">9</a></td></tr>
+          <tr><td>Loader flags missing or damaged before departure</td><td>Flag events; departure check</td><td>Flag reaches dispatch and driver</td><td><a href="#s6">6</a></td></tr>
+          <tr><td>Driver records outcome and proof, offline</td><td>Phone outbox, idempotent sync</td><td>Offline batch sent twice, no duplicates; correction kept beside</td><td><a href="#s7">7</a></td></tr>
+          <tr><td>Store confirms receipt and reports issues</td><td>Receipt per line</td><td>Issue IS-000010 recorded</td><td><a href="#s9">9</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Branch frontend_v2 · production Docker build with local sign-in · tests: backend/tests/day_scenario.py, rules_audit.py, walkthrough.py.</footer>
+</div>

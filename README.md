@@ -116,6 +116,11 @@ DATABASE_URL="postgresql://waypoint:waypoint@localhost:5433/waypoint?sslmode=dis
   vehicles in the workshop) and the next day's run; searches for any avoidable deferral; tries every
   way of breaking a rule by hand through the API (each must be refused); checks the cutoff, release,
   deferral records, store notices and depot switching.
+- `tests/day_scenario.py`: **one complete delivery day, both depots** (114 checks): store orders of every
+  category, the 16:00 cutoff on the clock, both plans audited rule by rule, every trip loaded and driven
+  (failed, short and offline deliveries), failed orders moved on, receipts, the end-of-day close with fuel
+  against the weekly quota, and the next day serving everything carried over. Screens of the same day:
+  [docs/walkthrough/waypoint-delivery-day.html](docs/walkthrough/waypoint-delivery-day.html).
 - `tests/walkthrough.py`: the four roles end to end through the API, including offline sync,
   idempotent resends, corrections and photo links.
 
