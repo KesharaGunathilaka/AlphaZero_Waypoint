@@ -9,20 +9,30 @@ All screenshots in [`docs/ux/`](ux/) were taken from the production build (`dock
 the local sign-in, in one continuous run: dispatcher plans → loader loads VEH057 (one line short) →
 driver delivers two stops (the second with no signal) → store managers see the result.
 
-| Role | Device and place | Main pressure | Design answer |
+The personas are the Challenge Booklet's ("The four user roles"); each role's section below maps
+every need the booklet lists to the screen that answers it.
+
+| Role | Where and on what (booklet) | Today, without Waypoint | Design answer |
 |---|---|---|---|
-| Dispatcher | Desktop or laptop in the depot office; phone when away | Many orders, hard rules, a deadline before 03:30 | One guided flow, one main button, every rule explained |
-| Loader | Shared tablet on the loading dock, gloves, noise, poor light | Load fast, in the right order, flag what is missing | Dark high-contrast tablet UI, huge quantities, one tap per line |
-| Driver | Own phone, in the cab, often no signal, not a "tech" person | Drive, find the stop, hand over, prove it | One big "next step" button, plain words, works offline |
-| Store manager | Phone on the shop floor, sometimes the office PC | Order before 16:00, know what is coming, report problems | Three sections under the thumb, "Needs you" first |
+| Dispatcher | Large screen in the planning office, stable connection | Daily plan built in a spreadsheet from memory of restrictions and vehicles | Engine-built plan, one guided flow, every rule and deferral explained |
+| Loader | Warehouse dock (Peliyagoda or Kandy), shared tablet or terminal | Printed loading lists go out of date when the plan changes | Live load list in stop order, one tap per line, flags before release |
+| Driver | On the road, personal phone, used when safely stopped | Paper run sheet and phone calls for changes | One big "next step" button, plain words, works offline |
+| Store manager | Outlet counter, desktop or phone | Orders by phone or message, with no confirmation they were received or scheduled | Confirmation number at once, arrival window, deferral notice, confirm receipt |
 
 ---
 
 ## 1. Dispatcher
 
-**Who and where.** Plans the next day in the depot office between the 16:00 cutoff and the first
-departures at 03:30. Knows the operation well, but is not a planner by training. Needs to defend every
-decision (which orders were deferred, why) to store managers and management the next day.
+**Who and where (booklet).** Works at a large screen in the planning office with a stable connection.
+Today the daily plan is built in a spreadsheet, from knowledge of outlet restrictions and vehicle
+capabilities. Plans between the 16:00 cutoff and the first departures at 03:30.
+
+| Booklet need | Where the app answers it |
+|---|---|
+| Visibility into progress and problems after vehicles leave | Live: trips sorted by risk, stops done, alerts with replies (Send partial, Hold vehicle) |
+| Explain deferral decisions | Every deferral carries the reason the store is told; *Try to fit* shows every vehicle and the rule that blocks it |
+| Identify outlets already skipped | Last 5 runs per deferred order, "Skipped last run too", Records filter "Skipped 2+ runs in a row" |
+| (Today: spreadsheet + memory of restrictions) | The engine builds the plan; every booklet rule is checked on each change; a plan that breaks one cannot be sent |
 
 **What was wrong before** (feature/wire, [`before-dispatcher-plan.jpg`](ux/before-dispatcher-plan.jpg),
 [`before-dispatcher-deferrals.jpg`](ux/before-dispatcher-deferrals.jpg)):
@@ -39,6 +49,7 @@ decision (which orders were deferred, why) to store managers and management the 
 | Decision | Why |
 |---|---|
 | Plain tab names: Plan · Deferred · Live · Records, with a count badge on Deferred | Names say what is inside; the badge shows where attention is needed |
+| A depot selector in the header (Kandy / Peliyagoda) for the planning-office dispatcher | The booklet's dispatcher plans from one office; every tab shows the chosen depot, and depot rules still apply to each plan |
 | "Today's steps" strip: Close orders → Build the plan → Check what can't go → Send to depot → Watch it run, with **one** main button that is always the next step ([`02`](ux/02-dispatcher-plan.jpg)) | A new dispatcher can run the day without training; an experienced one never hunts for the next action |
 | Trips as one table row each (vehicle, brand + district, leaves–back, stops in order, load %, fuel), filter chips and search, details open on demand ([`03`](ux/03-dispatcher-trip-detail.jpg)) | About 9 trips per screen at 1024×768 instead of about 3 vehicles; answering "where is OUT083?" is one search |
 | Every deferred order carries the engine's reason from the start; changing it saves at once ([`05`](ux/05-dispatcher-deferred.jpg)) | No separate confirm step; reasons are what the store is told, so they must exist before sending |
@@ -55,9 +66,15 @@ decision (which orders were deferred, why) to store managers and management the 
 
 ## 2. Loader
 
-**Who and where.** Loads vans and trucks on the dock from about 02:30, on a shared tablet mounted or
-propped near the bay, in poor light, often with gloves. Must load the **last stop first** so the
-driver unloads in order, and must report shortfalls before the van leaves.
+**Who and where (booklet).** Works at the Peliyagoda or Kandy warehouse dock on a shared tablet or
+terminal. Printed loading lists go out of date when plans change. Loads from about 02:30, often in poor
+light and with gloves.
+
+| Booklet need | Where the app answers it |
+|---|---|
+| The stop sequence, to load in an order that supports unloading | "Load in this order: last stop first"; stops listed in loading order |
+| Flag missing or damaged items before the vehicle leaves | *Flag* on every line (Missing, Short, Damaged); the dispatcher gets it at once; the departure check shows it before release |
+| (Today: printed lists go stale) | The list comes from the sent plan; a re-sent plan marks changed trips until the loader opens them |
 
 **Design decisions** (kept from the design, sharpened in v2)
 
@@ -78,8 +95,16 @@ replies ([`18`](ux/18-dispatcher-live.jpg)) and the driver's screen at that stop
 
 ## 3. Driver
 
-**Who and where.** Drives a van or truck through Kandy and the hill districts, where mobile coverage
-drops. Uses their own phone with one hand, often in a hurry, and is not comfortable with apps.
+**Who and where (booklet).** Works on the road with a personal phone; today from a paper run sheet and
+phone calls for changes. Interactions are designed for use when safely stopped. Coverage drops across
+hill country and the Kandy corridor.
+
+| Booklet need | Where the app answers it |
+|---|---|
+| Record delivery outcomes and proof, so disputes do not depend on memory | All delivered / Some missing / Not delivered, who took it, signature, photo; corrections sit beside the original |
+| Record work offline and sync when connectivity returns | Every record is saved on the phone first and sent by itself when signal returns; resending never duplicates |
+| Use when safely stopped | One large button per step (Start trip, I'm here, Deliver): one tap at the stop |
+| (Today: paper run sheet, phone calls for changes) | The run on the phone, kept offline; dispatcher messages appear on it with "OK, got it" |
 
 **What was wrong before** ([`before-driver-home.jpg`](ux/before-driver-home.jpg)):
 - The screens sat inside a drawn phone frame, even on a real phone (wasted edges).
@@ -111,8 +136,16 @@ drops. Uses their own phone with one hand, often in a hurry, and is not comforta
 
 ## 4. Store manager
 
-**Who and where.** Runs a Fresh, Style or Tech outlet. Orders on a phone on the shop floor (sometimes
-the office PC), must order before 16:00 the working day before, and checks deliveries at the door.
+**Who and where (booklet).** Works at the outlet counter using a desktop or a phone. Today orders go in
+by phone call or message, with no confirmation that the depot received or scheduled them. Must order
+before 16:00 the working day before.
+
+| Booklet need | Where the app answers it |
+|---|---|
+| (Today: no confirmation the order was received or scheduled) | A confirmation number the moment it is placed (WP-261004-…), an "Order received" notice, then *Scheduled* once the plan is sent |
+| An expected arrival time, to schedule staff to receive goods | The arrival window in large type (e.g. 04:29–04:59) on Deliveries as soon as the plan is sent |
+| Clear notice when an order is deferred | "Not arriving on Tuesday", the reason in plain words, and the new day |
+| A way to confirm receipt and report issues | *Confirm*: ordered / driver delivered / received per line, *Report issue* per line, a red count on the tab until done |
 
 **What was wrong before** ([`before-store-phone.jpg`](ux/before-store-phone.jpg)): four tabs across
 the top ran off a phone screen ("Confirm" cut off), "Order detail" was a tab rather than something you
