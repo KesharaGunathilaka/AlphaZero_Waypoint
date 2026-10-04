@@ -15,7 +15,7 @@ USER_ROLES = frozenset({
     "org:dispatcher",
     "org:driver",
     "org:loader",
-    "org:store-manager",
+    "org:store_manager",
 })
 
 

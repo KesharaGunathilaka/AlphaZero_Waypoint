@@ -37,10 +37,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-# Serwist (webpack variant) writes the service worker into public/
-frontend/public/sw.js
-frontend/public/sw.js.map
-frontend/public/swe-worker-*.js
 
 # ---------- Python / FastAPI (backend) ----------
 __pycache__/

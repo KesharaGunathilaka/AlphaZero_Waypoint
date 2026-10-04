@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { DISPATCHER } from "./data";
+import { useRun } from "./use-run";
 
 /**
  * The driver's screens live behind a drawer inside the phone, not on a bar beside it:
@@ -91,6 +92,8 @@ export function MenuButton() {
  */
 export function NavDrawer() {
   const { screen, navigate, menuOpen, closeMenu } = useDriverNav();
+  const { run, currentTrip, trips, outbox } = useRun();
+  const driver = run?.driver;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -120,9 +123,13 @@ export function NavDrawer() {
         )}
       >
         <div className="flex flex-col gap-0.5 border-b border-wp-border px-4 py-4">
-          <div className="text-xs font-semibold tracking-[.06em] text-wp-muted">DRIVER · RT-03</div>
-          <div className="text-[22px] leading-[26px] font-bold">Mahinda</div>
-          <div className="text-[13px] text-wp-text-2">Route 1 of 2 · 9 stops</div>
+          <div className="text-xs font-semibold tracking-[.06em] text-wp-muted">
+            DRIVER · {driver?.vehicle_source_id ?? "no vehicle"}
+          </div>
+          <div className="text-[22px] leading-[26px] font-bold">{driver?.name ?? "…"}</div>
+          <div className="text-[13px] text-wp-text-2">
+            {currentTrip ? `Trip ${trips.indexOf(currentTrip) + 1} of ${trips.length} · ${currentTrip.stops.length} stops` : "No trips yet"}
+          </div>
         </div>
 
         <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -147,6 +154,13 @@ export function NavDrawer() {
           })}
         </div>
 
+        <label className="mx-3 mb-2 flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-[10px] border border-dashed border-wp-border px-3 text-[13px] font-semibold">
+          <span>
+            Simulate no signal
+            <span className="block text-[11px] font-normal text-wp-text-2">Demo: records wait on the phone</span>
+          </span>
+          <input type="checkbox" className="size-5" checked={outbox.simulated} onChange={(e) => outbox.simulate(e.target.checked)} />
+        </label>
         <div className="border-t border-wp-border p-3">
           <a
             href={`tel:${DISPATCHER.tel}`}

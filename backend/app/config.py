@@ -63,24 +63,50 @@ class Settings(BaseSettings):
                 args["prepared_statement_name_func"] = lambda: f"__asyncpg_{uuid4()}__"
         return args
 
+    # Sign-in. "clerk" = the deployed app (Clerk tokens). "local" = the Docker delivery: the API checks
+    # email + password against wp.app_user and signs its own tokens with LOCAL_AUTH_SECRET.
+    AUTH_MODE: Literal["clerk", "local"] = "clerk"
+    LOCAL_AUTH_SECRET: SecretStr = SecretStr("")  # HS256 key, at least 32 characters; shared with the web app
+    LOCAL_TOKEN_HOURS: PositiveInt = 12
+
     # Clerk
     CLERK_JWKS_URL: str = ""  # e.g. https://<your-domain>.clerk.accounts.dev/.well-known/jwks.json
     CLERK_ISSUER: str = ""
     CLERK_AUDIENCE: str | None = None  # read by app/auth/auth.py; None = do not check "aud"
+    # Used once per new sign-in to read the user's email and link them to their wp.app_user row.
+    CLERK_SECRET_KEY: SecretStr = SecretStr("")
+    # Development only: accept "X-Dev-User: <email>" instead of a Clerk token (tests, curl).
+    AUTH_DEV_BYPASS: bool = False
+
+    # Photos and signatures. "db" keeps them in Postgres (Docker delivery: no cloud account needed);
+    # "s3" uses an S3-compatible bucket (deployed: Neon object storage, credentials in .env.aws).
+    STORAGE_BACKEND: Literal["db", "s3"] = "db"
+    S3_BUCKET: str = "images"
+    AWS_ENDPOINT_URL_S3: str = ""
+    AWS_REGION: str = "ap-southeast-1"
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: SecretStr = SecretStr("")
+    # Signs the short-lived image links of the "db" backend. Empty = a random key per process.
+    URL_SIGNING_SECRET: SecretStr = SecretStr("")
+    PUBLIC_API_URL: str = "http://localhost:8000"  # how browsers reach this API (image links)
     CLERK_AUTHORIZED_PARTIES: list[str] = []  # from Clerk Dashboard > API Keys > your key > Authorized Parties
     CLERK_WEBHOOK_SECRET: SecretStr = SecretStr("")  # from Clerk Dashboard > Webhooks > your endpoint > Signing Secret
 
     @model_validator(mode="after")
     def _validate_security(self) -> Self:
+        if self.AUTH_MODE == "local" and len(self.LOCAL_AUTH_SECRET.get_secret_value()) < 32:
+            raise ValueError("LOCAL_AUTH_SECRET must be at least 32 characters when AUTH_MODE=local")
         if self.ENVIRONMENT == "production":
             if self.DEBUG:
                 raise ValueError("DEBUG must be False in production")
-            if not self.CLERK_AUTHORIZED_PARTIES:
+            if self.AUTH_MODE == "clerk" and not self.CLERK_AUTHORIZED_PARTIES:
                 raise ValueError("CLERK_AUTHORIZED_PARTIES must be set in production")
             if not self.CORS_ORIGINS or "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must be explicit in production")
             if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:
                 raise ValueError("ALLOWED_HOSTS must be explicit in production")
+            if self.AUTH_DEV_BYPASS:
+                raise ValueError("AUTH_DEV_BYPASS must be off in production")
         return self
 
 

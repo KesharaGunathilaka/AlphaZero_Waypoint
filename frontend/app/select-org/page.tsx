@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { AUTH_MODE } from "@/lib/auth-mode";
 import { auth } from "@clerk/nextjs/server";
 import { OrganizationList } from "@clerk/nextjs";
 import { Logo } from "@/components/waypoint/logo";
@@ -14,6 +15,7 @@ export const metadata: Metadata = {
  * forwards them to their role's app.
  */
 export default async function SelectOrgPage() {
+  if (AUTH_MODE === "local") redirect("/"); // Clerk-only page
   const { userId, orgId } = await auth();
 
   if (!userId) redirect("/sign-in");

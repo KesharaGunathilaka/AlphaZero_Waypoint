@@ -2,25 +2,53 @@
 
 import { useState, type ReactNode } from "react";
 import { Button, Stepper } from "@/components/waypoint/controls";
-import { StatusPill, type Tone } from "@/components/waypoint/status";
+import { Banner, StatusPill, type Tone } from "@/components/waypoint/status";
+import { errorMessage, shrinkImage, useApi, useApiData, useUpload } from "@/lib/api/use-api";
+import { formatDayTime, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
-  DELIVERED_LINES,
+  ISSUE_API_TYPE,
   ISSUE_RULES,
   ISSUE_TYPES,
-  type DeliveredLine,
+  orderKind,
   type Issue,
   type IssueType,
+  type OrderDetailData,
   type ReportedIssue,
 } from "./data";
 import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 
-export type Receipt = { issues: ReportedIssue[] };
+export type Receipt = { orderId: number; confirmationNo: string; issues: ReportedIssue[]; confirmedAt: Date };
 
-/** Issues are numbered in delivery order, from the first free reference in this prototype. */
-const FIRST_REFERENCE = 7720;
+/** One delivered line: what was ordered, what the driver recorded handing over, and why they differ. */
+type DeliveredLine = {
+  lineNo: number;
+  name: string;
+  ordered: number;
+  delivered: number;
+  /** Shown under the line when the shortfall was known before delivery. */
+  note?: string;
+};
+
 const EMPTY_ISSUE: Issue = { type: "Missing", qty: 1 };
+
+function deliveredLines(order: OrderDetailData): DeliveredLine[] {
+  return order.receipt_lines.map((l) => {
+    const ordered = Number(l.ordered_qty);
+    const loaded = Number(l.expected_qty ?? ordered);
+    return {
+      lineNo: l.line_no,
+      name: l.product_name,
+      ordered,
+      delivered: Number(l.delivered_qty ?? loaded),
+      note:
+        loaded < ordered
+          ? `Loaded ${loaded} of ${ordered} at the depot: short at the warehouse, recorded before the van left.`
+          : undefined,
+    };
+  });
+}
 
 /** What you actually took in: an issue that removes units lowers it, damage does not. */
 function receivedCount(line: DeliveredLine, issue: Issue | undefined) {
@@ -64,25 +92,80 @@ function issueSentence(line: DeliveredLine, issue: Issue) {
 
 /** S4 · Confirm delivery: compare ordered, delivered and received, and report issues per line. */
 export function ConfirmDelivery({
+  orderId,
   receipt,
   onConfirm,
   onBack,
 }: {
+  orderId: number;
   receipt: Receipt | null;
   onConfirm: (receipt: Receipt) => void;
   onBack: () => void;
 }) {
+  const detail = useApiData<OrderDetailData>(`/store/orders/${orderId}`);
+  const request = useApi();
+  const upload = useUpload();
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   /** Reported issues, keyed by line name. */
   const [issues, setIssues] = useState<Record<string, Issue>>({});
   /** The line whose report panel is open, and the unsaved values in it. */
   const [openLine, setOpenLine] = useState<string | null>(null);
   const [draft, setDraft] = useState<Issue>(EMPTY_ISSUE);
 
-  const reported = DELIVERED_LINES.filter((line) => issues[line.name]).map((line, i) => ({
-    line: line.name,
-    reference: `IS-${FIRST_REFERENCE + i}`,
-    ...issues[line.name],
-  }));
+  if (receipt) return <ConfirmedReceipt receipt={receipt} onBack={onBack} />;
+  if (detail.error && !detail.data) return <Banner state="crit">{detail.error}</Banner>;
+  if (!detail.data) return <div className="text-[13px] text-wp-text-2">Loading the delivery…</div>;
+
+  const order = detail.data;
+  const lines = deliveredLines(order);
+  const reportedLines = lines.filter((line) => issues[line.name]);
+
+  async function confirm() {
+    setError(null);
+    setSending(true);
+    try {
+      const result = await request<{ issues: { issue_id: string; reference_no: string; line_no: number }[] }>(
+        `/store/orders/${order.order_id}/receipt`,
+        {
+          method: "POST",
+          body: {
+            issues: reportedLines.map((line) => {
+              const issue = issues[line.name];
+              return {
+                line_no: line.lineNo,
+                type: ISSUE_API_TYPE[issue.type],
+                qty: issue.type === "Nothing arrived" ? Math.max(1, line.delivered) : issue.qty,
+                note: issue.instead?.trim() ? `Arrived instead: ${issue.instead.trim()}` : null,
+              };
+            }),
+          },
+        },
+      );
+      // Photos go up once each issue exists, so they can be attached to it.
+      for (const line of reportedLines) {
+        const photo = issues[line.name].photo;
+        const saved = result.issues.find((i) => i.line_no === line.lineNo);
+        if (photo && saved) {
+          await upload(await shrinkImage(photo), { kind: "photo", issue_id: saved.issue_id });
+        }
+      }
+      onConfirm({
+        orderId: order.order_id,
+        confirmationNo: order.confirmation_no,
+        confirmedAt: new Date(),
+        issues: reportedLines.map((line) => ({
+          line: line.name,
+          reference: result.issues.find((i) => i.line_no === line.lineNo)?.reference_no ?? "",
+          ...issues[line.name],
+        })),
+      });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSending(false);
+    }
+  }
 
   function openPanel(line: DeliveredLine) {
     if (openLine === line.name) return setOpenLine(null);
@@ -104,8 +187,6 @@ export function ConfirmDelivery({
     setOpenLine(null);
   }
 
-  if (receipt) return <ConfirmedReceipt receipt={receipt} onBack={onBack} />;
-
   return (
     <>
       <div className="flex flex-col gap-1">
@@ -113,15 +194,18 @@ export function ConfirmDelivery({
           ← Deliveries
         </LinkButton>
         <h1 className={storeLayout.h1}>Confirm delivery</h1>
-        <div className="text-[13px] text-wp-text-2">Fresh · Dry groceries · Order FP-4409</div>
+        <div className="text-[13px] text-wp-text-2">
+          {orderKind(order)} · Order {order.confirmation_no}
+        </div>
       </div>
+      {error && <Banner state="crit">{error}</Banner>}
 
       <div className={cn(storeLayout.card, "grid gap-4 p-4", storeLayout.colsReceipt)}>
         {[
-          ["DELIVERED", "Tue 29 Sep 09:42"],
-          ["DRIVER · VEHICLE", "K. Perera · RT-03"],
-          ["SIGNED BY", "S. Fernando"],
-          ["PHOTO · RECORD", "1 attached · DR-20931"],
+          ["DELIVERED", order.delivery ? formatDayTime(order.delivery.delivered_at) : "—"],
+          ["DRIVER · VEHICLE", order.delivery ? `${order.delivery.driver_name} · ${order.delivery.vehicle_source_id}` : "—"],
+          ["SIGNED BY", order.delivery?.received_by ?? "—"],
+          ["PROOF", order.proof.length ? `${plural(order.proof.length, "file")} attached` : "None"],
         ].map(([label, value]) => (
           <div key={label}>
             <div className="text-[11px] font-semibold tracking-[.06em] text-wp-muted">{label}</div>
@@ -143,7 +227,7 @@ export function ConfirmDelivery({
           <span>YOU RECEIVED</span>
         </div>
 
-        {DELIVERED_LINES.map((line) => {
+        {lines.map((line) => {
           const issue = issues[line.name];
           const status = lineStatus(line, issue);
           const received = receivedCount(line, issue);
@@ -193,19 +277,18 @@ export function ConfirmDelivery({
       </div>
 
       <div className="flex flex-col items-start gap-3">
-        <Button
-          className="min-h-14 w-full px-6 text-base sm:w-auto"
-          onClick={() => onConfirm({ issues: reported })}
-        >
-          {reported.length === 0
-            ? "Everything arrived as shown"
-            : `Confirm with ${reported.length} ${reported.length === 1 ? "issue" : "issues"}`}
+        <Button className="min-h-14 w-full px-6 text-base sm:w-auto" disabled={sending} onClick={confirm}>
+          {sending
+            ? "Sending…"
+            : reportedLines.length === 0
+              ? "Everything arrived as shown"
+              : `Confirm with ${plural(reportedLines.length, "issue")}`}
         </Button>
         <div className="text-xs leading-4 text-wp-muted">
-          {reported.length > 0 ? (
+          {reportedLines.length > 0 ? (
             "A reference number is issued for each issue and sent to dispatch."
           ) : (
-            <WarehouseShortNote />
+            <WarehouseShortNote lines={lines} />
           )}
         </div>
       </div>
@@ -229,8 +312,8 @@ function Count({ label, children }: { label: string; children: ReactNode }) {
  * The lines the warehouse could not fill. That gap was settled before the van left, so confirming
  * accepts it rather than raising it: only a gap against the driver's own count becomes an issue.
  */
-function WarehouseShortNote() {
-  const short = DELIVERED_LINES.filter((line) => line.delivered < line.ordered);
+function WarehouseShortNote({ lines }: { lines: DeliveredLine[] }) {
+  const short = lines.filter((line) => line.delivered < line.ordered);
   if (short.length === 0) return <>Every line matches what you ordered.</>;
   return (
     <>
@@ -368,7 +451,9 @@ function ConfirmedReceipt({ receipt, onBack }: { receipt: Receipt; onBack: () =>
           : `Confirmed with ${count} ${count === 1 ? "issue" : "issues"}.`}
       </div>
       {count === 0 ? (
-        <div className="text-[13px] leading-[18px] text-wp-text-2">Recorded Tue 29 Sep 17:32 against DR-20931.</div>
+        <div className="text-[13px] leading-[18px] text-wp-text-2">
+          Recorded {formatDayTime(receipt.confirmedAt)} against order {receipt.confirmationNo}.
+        </div>
       ) : (
         <div className="flex flex-col gap-3">
           {receipt.issues.map((issue) => (
@@ -385,7 +470,7 @@ function ConfirmedReceipt({ receipt, onBack }: { receipt: Receipt; onBack: () =>
             </div>
           ))}
           <div className="text-[13px] leading-[18px] text-wp-text-2">
-            Dispatch has the record. Confirmed Tue 29 Sep 17:32 against DR-20931.
+            Dispatch has the record. Confirmed {formatDayTime(receipt.confirmedAt)} against order {receipt.confirmationNo}.
           </div>
         </div>
       )}
@@ -405,8 +490,8 @@ function PhotoPicker({
   onChange,
 }: {
   line: string;
-  photo: string | undefined;
-  onChange: (photo: string | undefined) => void;
+  photo: File | undefined;
+  onChange: (photo: File | undefined) => void;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -425,12 +510,12 @@ function PhotoPicker({
             capture="environment"
             aria-label={`Add a photo of ${line}`}
             className="sr-only"
-            onChange={(e) => onChange(e.target.files?.[0]?.name)}
+            onChange={(e) => onChange(e.target.files?.[0])}
           />
         </label>
         {photo && (
           <span className="flex min-w-0 items-center gap-2 text-xs text-wp-text-2">
-            <span className="min-w-0 truncate">{photo}</span>
+            <span className="min-w-0 truncate">{photo.name}</span>
             <LinkButton onClick={() => onChange(undefined)}>Remove</LinkButton>
           </span>
         )}

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/components/waypoint/status";
-import type { PlanVersion } from "./data";
+import type { useOutbox } from "@/lib/offline/outbox";
 
 // Building blocks for the loader's shared dock tablet: dark theme, 56px+ touch targets.
 
@@ -42,15 +42,20 @@ export function TabletPill({ tone, children, className }: { tone: Tone; children
   );
 }
 
-/** Who is signed in to the shared tablet, and which plan the dock is working to. */
-export function LiveStatus({ plan }: { plan: PlanVersion }) {
+export type Outbox = ReturnType<typeof useOutbox>;
+
+/** Who is signed in to the shared tablet, whether the dock is online, and what is waiting to send. */
+export function LiveStatus({ who, outbox, plan }: { who: string; outbox: Outbox; plan?: { version: string } | null }) {
+  const state: { tone: Tone; text: string } = !outbox.online
+    ? { tone: "offline", text: `⊘ Offline · ${outbox.pending} saved on tablet` }
+    : outbox.pending > 0
+      ? { tone: "info", text: `● Sending ${outbox.pending}…` }
+      : { tone: "good", text: "● Live" };
   return (
     <div className="flex items-center gap-4">
-      <span className="text-wp-text-2">Nuwan</span>
-      <TabletPill tone="good">● Live</TabletPill>
-      <span className="font-semibold">
-        Plan {plan.version} · {plan.at}
-      </span>
+      <span className="text-wp-text-2">{who}</span>
+      <TabletPill tone={state.tone}>{state.text}</TabletPill>
+      {plan && <span className="font-semibold">Plan {plan.version}</span>}
     </div>
   );
 }
