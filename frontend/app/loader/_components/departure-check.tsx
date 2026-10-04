@@ -2,19 +2,8 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import {
-  flagLabel,
-  flagSummary,
-  flaggedLines,
-  progressOf,
-  type LoadStop,
-  type LoadingVehicle,
-  type PlanVersion,
-} from "./data";
-import { CARD, LiveStatus, Meter, PRIMARY_TOUCH_BUTTON, TOUCH_BUTTON, TabletPill, TabletScreen } from "./tablet-ui";
-
-const PIN_LENGTH = 4;
-const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"];
+import { flagLabel, flagSummary, flaggedLines, isFullyLoaded, progressOf, type LoadStop, type LoadingVehicle } from "./data";
+import { CARD, LiveStatus, Meter, PRIMARY_TOUCH_BUTTON, TOUCH_BUTTON, TabletPill, TabletScreen, type Outbox } from "./tablet-ui";
 
 function kg(value: number) {
   return Math.round(value)
@@ -22,17 +11,26 @@ function kg(value: number) {
     .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-/** L3 · Departure check: review shortfalls and final load, then release the vehicle with a PIN. */
+/**
+ * L3 · Departure check: review shortfalls and final load, then release the vehicle to the driver.
+ * The release is signed by the loader's own sign-in (the Day 5 design used a PIN on a shared tablet).
+ */
 export function DepartureCheck({
   vehicle,
   stops,
-  plan,
+  who,
+  outbox,
+  released,
+  onRelease,
   onReopen,
   onBack,
 }: {
   vehicle: LoadingVehicle;
   stops: LoadStop[];
-  plan: PlanVersion;
+  who: string;
+  outbox: Outbox;
+  released: boolean;
+  onRelease: () => void;
   onReopen: () => void;
   onBack: () => void;
 }) {
@@ -40,27 +38,24 @@ export function DepartureCheck({
   const shortfalls = flaggedLines(stops);
   const weightPercent = Math.round((progress.weightKg / vehicle.capacityKg) * 100);
   const volumePercent = Math.round((progress.volumeM3 / vehicle.capacityM3) * 100);
-  const [pin, setPin] = useState("");
-  const [released, setReleased] = useState(false);
-
-  function press(key: string) {
-    if (key === "⌫") setPin((p) => p.slice(0, -1));
-    else if (key) setPin((p) => (p.length < PIN_LENGTH ? p + key : p));
-  }
+  const ready = isFullyLoaded(progress);
+  const [checkedAt] = useState(() =>
+    new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }),
+  );
 
   return (
     <TabletScreen label="L3 Departure check">
-      <header className="flex h-[72px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
+      <header className="flex min-h-[72px] flex-none flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6">
         <div className="flex items-center gap-5">
           <button type="button" onClick={onBack} className={cn(TOUCH_BUTTON, "h-11")}>
             ‹ Vehicles
           </button>
-          <div className="text-xl font-bold">Departure check · {vehicle.id}</div>
+          <div className="text-xl font-bold">Departure check · {vehicle.label}</div>
         </div>
-        <LiveStatus plan={plan} />
+        <LiveStatus who={who} outbox={outbox} />
       </header>
 
-      <div className="grid flex-1 grid-cols-[minmax(0,1fr)_400px] gap-6 p-6">
+      <div className="grid flex-1 grid-cols-1 gap-6 p-4 md:p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-3">
             <TabletPill tone="good" className="h-12 px-5 text-[17px]">
@@ -99,7 +94,7 @@ export function DepartureCheck({
 
           <div className={cn(CARD, "flex flex-col gap-4 p-5")}>
             <div className="text-[13px] font-semibold tracking-[.06em] text-wp-muted">FINAL LOAD</div>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
               <Meter
                 label="Weight"
                 value={`${kg(progress.weightKg)} of ${kg(vehicle.capacityKg)} kg · ${weightPercent}%`}
@@ -113,10 +108,10 @@ export function DepartureCheck({
                 fillClassName="bg-wp-gauge-amber"
               />
             </div>
-            <div className="grid grid-cols-3 gap-4 border-t border-wp-border pt-4">
+            <div className="grid grid-cols-1 gap-4 border-t border-wp-border pt-4 sm:grid-cols-3">
               {[
-                ["Loaded by", "Nuwan"],
-                ["Finished", "05:12"],
+                ["Loaded by", who],
+                ["Checked", checkedAt],
                 ["Departure", vehicle.departs],
               ].map(([label, value]) => (
                 <div key={label}>
@@ -130,57 +125,48 @@ export function DepartureCheck({
 
         <div className={cn(CARD, "flex flex-col gap-4 self-start p-6")}>
           <div>
-            <div className="text-xl leading-[26px] font-semibold">Enter your PIN to release</div>
-            <div className="text-sm text-wp-text-2">The tablet is shared, so release is signed by you.</div>
+            <div className="text-xl leading-[26px] font-semibold">
+              {released ? `${vehicle.label} is released` : "Release to the driver"}
+            </div>
+            <div className="text-sm text-wp-text-2">
+              Signed as {who || "you"}: the release is recorded against your sign-in, with the time.
+            </div>
           </div>
-          <div className="flex h-8 items-center justify-center gap-4" aria-label={`${pin.length} of ${PIN_LENGTH} digits entered`}>
-            {Array.from({ length: PIN_LENGTH }, (_, i) => (
-              <span
-                key={i}
-                className={cn("size-[18px] rounded-full", i < pin.length ? "bg-wp-text" : "border-2 border-wp-text-2")}
-              />
-            ))}
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-[26px] font-semibold">
-            {KEYS.map((key, i) =>
-              key ? (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => press(key)}
-                  aria-label={key === "⌫" ? "Delete" : key}
-                  className={cn(
-                    "h-[60px] cursor-pointer rounded-lg",
-                    key === "⌫" ? "text-[22px]" : "bg-wp-surface-2",
-                  )}
-                >
-                  {key}
-                </button>
-              ) : (
-                <span key={i} />
-              ),
-            )}
-          </div>
+          {!ready && !released && (
+            <div className="rounded-lg border border-wp-warn bg-wp-warn-tint p-3 text-[15px] text-wp-warn">
+              ▲ Every line must be loaded or flagged, and every stop signed off, before release.
+            </div>
+          )}
           <button
             type="button"
-            disabled={pin.length < PIN_LENGTH || released}
-            onClick={() => setReleased(true)}
+            disabled={!ready || released}
+            onClick={onRelease}
             className={cn(PRIMARY_TOUCH_BUTTON, "h-16 text-[17px] disabled:cursor-not-allowed disabled:opacity-60")}
           >
-            {released ? `✓ ${vehicle.id} released to driver` : `Release ${vehicle.id} to driver`}
+            {released ? `✓ ${vehicle.label} released to driver` : `Release ${vehicle.label} to driver`}
           </button>
-          {/* Released vehicles stay released: reopening is the step before, not after. */}
+          {released && outbox.pending > 0 && (
+            <div className="text-center text-[13px] text-wp-text-2">
+              {outbox.online ? "Sending the release…" : "Saved on the tablet. It is sent when the dock is back online."}
+            </div>
+          )}
           {released ? (
-            <button type="button" onClick={onBack} className={TOUCH_BUTTON}>
-              Back to vehicles
-            </button>
+            <>
+              <button type="button" onClick={onBack} className={TOUCH_BUTTON}>
+                Back to vehicles
+              </button>
+              <button type="button" onClick={onReopen} className={cn(TOUCH_BUTTON, "text-wp-text-2")}>
+                Reopen loading (before the driver leaves)
+              </button>
+            </>
           ) : (
             <button type="button" onClick={onReopen} className={TOUCH_BUTTON}>
-              Reopen loading
+              Back to the load list
             </button>
           )}
           <div className="text-center text-[13px] text-wp-muted">
-            Sets {vehicle.id} to Loaded on the driver’s phone and the dispatcher’s monitor.
+            Sets {vehicle.label} to Loaded on the driver’s phone and the dispatcher’s monitor. Shortfalls are shown
+            to the driver at each stop and to the store on its order.
           </div>
         </div>
       </div>

@@ -2,19 +2,10 @@
 
 import { useState } from "react";
 import { Logo } from "@/components/waypoint/logo";
+import { formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import {
-  findVehicle,
-  isFullyLoaded,
-  progressOf,
-  vehicleStatus,
-  type LoadProgress,
-  type LoadStop,
-  type LoadingVehicle,
-  type PlanChange,
-  type PlanVersion,
-} from "./data";
-import { CARD, LiveStatus, TabletPill, TabletScreen } from "./tablet-ui";
+import { isFullyLoaded, vehicleStatus, type LoadProgress, type LoadingVehicle } from "./data";
+import { CARD, LiveStatus, TabletPill, TabletScreen, type Outbox } from "./tablet-ui";
 
 const FILTERS = {
   all: { label: "All vehicles", match: () => true },
@@ -26,43 +17,56 @@ type Filter = keyof typeof FILTERS;
 /** L1 · Vehicles to load, in departure order. */
 export function VehiclesToLoad({
   vehicles,
-  plans,
+  progress,
   plan,
-  changes,
+  depot,
+  who,
+  outbox,
+  loading,
+  error,
   onOpenVehicle,
 }: {
   vehicles: LoadingVehicle[];
-  plans: Record<string, LoadStop[]>;
-  plan: PlanVersion;
-  changes: PlanChange[];
+  progress: Record<string, LoadProgress>;
+  plan: { version: string; serviceDate: string } | null;
+  depot: string | null;
+  who: string;
+  outbox: Outbox;
+  loading: boolean;
+  error: string | null;
   onOpenVehicle: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const runs = vehicles.map((vehicle) => ({ vehicle, progress: progressOf(plans[vehicle.id]) }));
+  const runs = vehicles.map((vehicle) => ({ vehicle, progress: progress[vehicle.id] }));
+  const changed = vehicles.filter((v) => v.planChanged);
   const shown = runs.filter(({ progress }) => FILTERS[filter].match(progress));
 
   return (
     <TabletScreen label="L1 Vehicles to load">
-      <header className="flex h-[72px] flex-none items-center justify-between border-b border-wp-border bg-wp-surface px-6">
+      <header className="flex min-h-[72px] flex-none flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-wp-border bg-wp-surface px-4 py-3 md:px-6">
         <div className="flex items-center gap-4">
           <Logo variant="light" className="h-9" />
-          <span className="text-wp-text-2">Dock 2 · Wed 30 Sep</span>
+          <span className="text-wp-text-2">
+            {depot ?? ""} depot{plan ? ` · ${formatDay(plan.serviceDate)}` : ""}
+          </span>
         </div>
-        <LiveStatus plan={plan} />
+        <LiveStatus who={who} outbox={outbox} plan={plan} />
       </header>
 
       <div className="flex flex-1 flex-col gap-4 p-6">
         {/* Always mounted, so a plan change arriving mid-shift is announced. */}
         <div role="status" aria-live="polite" className="flex flex-col gap-3 empty:hidden">
-          {changes.map((change) => (
-            <PlanChangeBanner
-              key={`${change.plan.version}-${change.vehicleId}`}
-              change={change}
-              vehicle={findVehicle(vehicles, change.vehicleId)}
-              onOpen={() => onOpenVehicle(change.vehicleId)}
-            />
+          {changed.map((vehicle) => (
+            <PlanChangeBanner key={vehicle.id} vehicle={vehicle} plan={plan} onOpen={() => onOpenVehicle(vehicle.id)} />
           ))}
         </div>
+        {error && <div className="rounded-[10px] border border-wp-crit bg-wp-crit-tint p-4 text-wp-crit">{error}</div>}
+        {loading && <div className="text-wp-text-2">Loading the dock queue…</div>}
+        {!loading && !error && vehicles.length === 0 && (
+          <div className={cn(CARD, "p-6 text-wp-text-2")}>
+            No released trips to load. They appear here as soon as the dispatcher releases the plan.
+          </div>
+        )}
 
         <div className="flex gap-2">
           {(Object.keys(FILTERS) as Filter[]).map((key) => (
@@ -84,7 +88,7 @@ export function VehiclesToLoad({
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {shown.map(({ vehicle: v, progress }) => {
             const status = vehicleStatus(v, progress);
             return (
@@ -100,24 +104,14 @@ export function VehiclesToLoad({
               >
                 <div className="flex w-full items-start justify-between">
                   <div>
-                    <div className="text-3xl leading-8 font-bold">{v.id}</div>
+                    <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.label}</div>
                     <div className="mt-1 text-wp-text-2">
                       {v.type} · {v.stops} stops
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-[13px] text-wp-muted">Departs</div>
-                    <div className="text-3xl leading-8 font-bold">{v.departs}</div>
-                    {v.retimedFrom && (
-                      <div
-                        className={cn(
-                          "text-[13px] font-semibold",
-                          v.planChanged ? "text-wp-warn" : "text-wp-muted",
-                        )}
-                      >
-                        {v.planChanged && "▲ "}was {v.retimedFrom}
-                      </div>
-                    )}
+                    <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.departs}</div>
                   </div>
                 </div>
                 <div className="h-2 w-full rounded bg-wp-surface-2">
@@ -145,46 +139,34 @@ export function VehiclesToLoad({
 }
 
 /**
- * What the dispatcher re-issued, in the loader's terms: a new departure time
- * says where the vehicle sits in the queue now, changed stops say the load list
- * has to be read again before anything goes on board.
+ * What the dispatcher re-issued, in the loader's terms: changed stops say the load list has to be read
+ * again before anything goes on board. Opening the vehicle acknowledges the change.
  */
 function PlanChangeBanner({
-  change,
   vehicle,
+  plan,
   onOpen,
 }: {
-  change: PlanChange;
   vehicle: LoadingVehicle;
+  plan: { version: string } | null;
   onOpen: () => void;
 }) {
-  const movedUp = vehicle.retimedFrom ? vehicle.departs < vehicle.retimedFrom : false;
-
   return (
     <div className="flex min-h-16 items-center gap-4 rounded-[10px] border border-wp-warn bg-wp-warn-tint px-4 text-wp-text">
       <span className="text-xl text-wp-warn">▲</span>
       <div className="flex-1">
         <b>
-          {vehicle.id} plan {change.plan.version} · {change.plan.at}.
+          {vehicle.label} · plan {plan?.version ?? ""} changed.
         </b>{" "}
-        {vehicle.retimedFrom && (
-          <>
-            Departs {vehicle.departs} instead of {vehicle.retimedFrom}, so it has moved{" "}
-            {movedUp ? "up" : "down"} the queue.{" "}
-          </>
-        )}
-        {change.changedStops !== undefined && (
-          <>
-            {change.changedStops} of {vehicle.stops} stops changed. Open the new load list before loading.
-          </>
-        )}
+        {vehicle.changedStops ? `${vehicle.changedStops} of ${vehicle.stops} stops changed. ` : ""}Departs {vehicle.departs}.
+        Open the new load list before loading.
       </div>
       <button
         type="button"
         onClick={onOpen}
         className="inline-flex h-11 cursor-pointer items-center rounded-lg border border-wp-warn px-4 text-[15px] font-semibold text-wp-warn"
       >
-        Open {vehicle.id}
+        Open {vehicle.label}
       </button>
     </div>
   );

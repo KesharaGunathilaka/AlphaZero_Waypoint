@@ -2,10 +2,12 @@
 __pycache__
 *.pyc
 .git
-.env*.local
 .pytest_cache
 .mypy_cache
 .ruff_cache
 Dockerfile
-compose.yaml
-README.md.env
+README.md
+tests
+# Env files never go into the image: docker-compose.yml passes every setting the container needs.
+.env
+.env.*

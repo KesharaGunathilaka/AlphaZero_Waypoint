@@ -1,19 +1,88 @@
 import type { Tone } from "@/components/waypoint/status";
+import { formatTime } from "@/lib/format";
 
-// Mock data from the loader design (Dock 2, Wed 30 Sep). Replace with API data.
+// ------------------------------------------------------------- API shapes ----
+// GET /loader/routes and /loader/routes/{id} (backend/app/modules/field/router.py; docs/api.md).
+
+export type RouteRow = {
+  route_id: number;
+  route_seq: number;
+  state: "planned" | "loading" | "loaded";
+  brand_code: "F" | "S" | "T";
+  district_name: string;
+  vehicle_code: string;
+  vehicle_source_id: string;
+  vehicle_class: string;
+  carries_chilled: boolean;
+  depart_at: string;
+  max_weight_kg: number;
+  max_volume_m3: number;
+  stop_count: number;
+  lines_total: number;
+  lines_confirmed: number;
+  open_flags: number;
+  plan_version: number;
+  plan_released_at?: string | null;
+  service_date: string;
+};
+
+export type PlanChangeRow = {
+  change_id: number;
+  route_id: number;
+  version: number;
+  changed_stops: number;
+  changed_orders: number;
+  created_at: string;
+  retimed: boolean | null;
+};
+
+export type LoadLineRow = {
+  stop_id: number;
+  stop_seq: number;
+  load_order: number;
+  outlet_name: string;
+  unload: string;
+  planned_arrival: string;
+  order_id: number;
+  confirmation_no: string;
+  line_no: number;
+  product_name: string;
+  unit: string;
+  ordered_qty: number;
+  line_temp: string;
+  fragile: boolean;
+  hanging: boolean;
+  qty_loaded: number | null;
+  line_state: "to_load" | "short" | "loaded";
+  flag_id: string | null;
+  flag_type: "missing" | "short" | "damaged" | null;
+  flag_state: "open" | "replied" | "resolved" | null;
+  flagged_at: string | null;
+  flag_qty: number | null;
+  flag_photos: number;
+  dispatcher_reply: string | null;
+  unit_weight_kg: number;
+  unit_volume_m3: number;
+};
+
+// --------------------------------------------------------- screen model ----
 
 export type LoadingVehicle = {
+  /** The trip (route) id, as text: one card per trip, since a vehicle can run two. */
   id: string;
+  routeId: number;
+  /** "VEH057 · trip 1": the booklet's vehicle id first. */
+  label: string;
   type: string;
   stops: number;
   departs: string;
-  /** What the load is measured against, derived from the plan the vehicle carries. */
   capacityKg: number;
   capacityM3: number;
-  /** Set by a plan change the loader has not opened yet, of either kind. */
+  refrigerated: boolean;
+  /** Released to the driver (route state "loaded"). */
+  released: boolean;
+  /** Set by a plan change the loader has not opened yet. */
   planChanged?: boolean;
-  /** The departure time a plan change moved this vehicle away from. Outlives the notice. */
-  retimedFrom?: string;
   /** How many of the stops the latest plan change touched. */
   changedStops?: number;
 };
@@ -27,11 +96,19 @@ export type LineFlag = {
   /** Units affected — all of them for a missing line. */
   units: number;
   photo?: boolean;
+  /** A photo taken on this tablet and not yet sent. */
+  photoFile?: File;
   at: string;
+  /** The dispatcher's answer, once there is one. */
+  reply?: string | null;
+  /** The server has it (a sent flag cannot be withdrawn, only replaced by a new one). */
+  sent?: boolean;
 };
 
 export type LoadLine = {
   id: string;
+  orderId: number;
+  lineNo: number;
   product: string;
   units: number;
   unit: string;
@@ -45,6 +122,7 @@ export type LoadLine = {
 
 export type LoadStop = {
   stop: number;
+  stopId: number;
   outlet: string;
   unload: string;
   deliverBy: string;
@@ -57,118 +135,83 @@ export type LoadStop = {
   confirmed?: boolean;
 };
 
-const PRODUCTS = [
-  { product: "Frozen chicken 1 kg", units: 18, unit: "cartons", tag: "Frozen", weightKg: 54, volumeM3: 0.42 },
-  { product: "Eggs, tray of 30", units: 14, unit: "trays", tag: "Fragile", weightKg: 28, volumeM3: 0.36 },
-  { product: "Chilled yoghurt cups", units: 12, unit: "crates", tag: "Chilled", weightKg: 38, volumeM3: 0.3 },
-  { product: "Fresh milk 1 L", units: 30, unit: "crates", tag: "Chilled", weightKg: 62, volumeM3: 0.45 },
-  { product: "Bread loaves", units: 20, unit: "crates", tag: "Dry", weightKg: 24, volumeM3: 0.38 },
-  { product: "Bottled water 1.5 L", units: 15, unit: "crates", tag: "Dry", weightKg: 68, volumeM3: 0.26 },
-  { product: "Leafy greens", units: 10, unit: "crates", tag: "Chilled", weightKg: 22, volumeM3: 0.33 },
-  { product: "Rice 5 kg", units: 16, unit: "bags", tag: "Dry", weightKg: 80, volumeM3: 0.24 },
-  { product: "Butter 200 g", units: 8, unit: "crates", tag: "Chilled", weightKg: 18, volumeM3: 0.14 },
-  { product: "Frozen prawns 500 g", units: 9, unit: "cartons", tag: "Frozen", weightKg: 36, volumeM3: 0.2 },
-  { product: "Tomatoes", units: 11, unit: "crates", tag: "Fragile", weightKg: 44, volumeM3: 0.28 },
-  { product: "Cooking oil 1 L", units: 12, unit: "cases", tag: "Dry", weightKg: 52, volumeM3: 0.22 },
-];
+const BRAND_NAME = { F: "Fresh", S: "Style", T: "Tech" } as const;
+const UNLOAD = { rear_dock: "rear dock", street: "curb", mall_bay: "mall bay" } as Record<string, string>;
+const capitalise = (s: string) => (s.charAt(0).toUpperCase() + s.slice(1)) as FlagType;
 
-/** Outlets repeat across vehicles in the mock; a real run comes from the plan. */
-const OUTLETS = [
-  "Fresh Mount Lavinia",
-  "Fresh Wattala",
-  "Fresh Rajagiriya",
-  "Fresh Borella",
-  "Fresh Dehiwala",
-  "Fresh Nugegoda",
-  "Fresh Kotte",
-  "Fresh Maharagama",
-  "Fresh Pettah",
-  "Fresh Moratuwa",
-  "Fresh Kelaniya",
-  "Fresh Battaramulla",
-];
-
-const UNLOAD = ["rear dock", "curb", "mall bay", "curb", "rear dock", "curb", "mall bay", "rear dock", "curb"];
-
-type VehicleSeed = {
-  id: string;
-  type: string;
-  departs: string;
-  /** Lines per stop in load order: the last stop of the run loads first. */
-  lineCounts: number[];
-  /** Lines already on board when this shift picked up the tablet. */
-  loaded: number;
-  outletFrom: number;
-};
-
-const SEEDS: VehicleSeed[] = [
-  { id: "RT-01", type: "Van", departs: "05:15", lineCounts: [8, 7, 8, 7, 7, 7], loaded: 44, outletFrom: 6 },
-  { id: "RT-03", type: "Refrigerated truck", departs: "05:30", lineCounts: [8, 9, 7, 9, 6, 5, 5, 4, 5], loaded: 31, outletFrom: 0 },
-  { id: "RT-05", type: "Van", departs: "05:45", lineCounts: [6, 6, 6, 6, 6, 5, 5], loaded: 0, outletFrom: 3 },
-  { id: "RT-02", type: "Refrigerated truck", departs: "06:00", lineCounts: [7, 7, 7, 6, 6, 6, 7, 6], loaded: 0, outletFrom: 9 },
-  { id: "RT-04", type: "Van", departs: "06:20", lineCounts: [7, 7, 7, 6, 6], loaded: 0, outletFrom: 1 },
-];
-
-/** Stop 1 delivers first at 06:10, and every later stop is twelve minutes behind it. */
-function deliverBy(stop: number) {
-  const minutes = 6 * 60 + 10 + (stop - 1) * 12;
-  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
-}
-
-/** Builds a run's stops in load order, with the lines that were already on board confirmed. */
-function buildStops(seed: VehicleSeed): LoadStop[] {
-  const stopCount = seed.lineCounts.length;
-  let lineIndex = 0;
-
-  return seed.lineCounts.map((count, index) => {
-    const stop = stopCount - index;
-    const lines = Array.from({ length: count }, (_, i) => {
-      const line: LoadLine = {
-        ...PRODUCTS[lineIndex % PRODUCTS.length],
-        id: `s${stop}-l${i + 1}`,
-        confirmed: lineIndex < seed.loaded,
-      };
-      lineIndex += 1;
-      return line;
-    });
-
-    return {
-      stop,
-      outlet: OUTLETS[(seed.outletFrom + index) % OUTLETS.length],
-      unload: UNLOAD[index % UNLOAD.length],
-      deliverBy: deliverBy(stop),
-      lines,
-      // Stops finished before this shift came on were signed off by the last one.
-      confirmed: lines.every((line) => line.confirmed),
-    };
-  });
-}
-
-/** A full load sits just under capacity, which is what the departure check reports. */
-function capacityFor(stops: LoadStop[]) {
-  const lines = stops.flatMap((s) => s.lines);
-  const kg = lines.reduce((total, l) => total + l.weightKg, 0);
-  const m3 = lines.reduce((total, l) => total + l.volumeM3, 0);
+export function toVehicle(row: RouteRow, changes: PlanChangeRow[]): LoadingVehicle {
+  const mine = changes.filter((c) => c.route_id === row.route_id);
   return {
-    capacityKg: Math.round(kg / 0.93 / 50) * 50,
-    capacityM3: Math.round((m3 / 0.93) * 2) / 2,
+    id: String(row.route_id),
+    routeId: row.route_id,
+    label: `${row.vehicle_source_id} · trip ${row.route_seq}`,
+    type: `${row.vehicle_class} · ${BRAND_NAME[row.brand_code]} ${row.district_name}`,
+    stops: row.stop_count,
+    departs: formatTime(row.depart_at),
+    capacityKg: Number(row.max_weight_kg),
+    capacityM3: Number(row.max_volume_m3),
+    refrigerated: row.carries_chilled,
+    released: row.state === "loaded",
+    planChanged: mine.length > 0,
+    changedStops: mine[0]?.changed_stops,
   };
 }
 
-const RUNS = SEEDS.map((seed) => ({ seed, stops: buildStops(seed) }));
+/** The queue's progress bar comes from the server's counts, so it needs no load list per vehicle. */
+export function progressFromRow(row: RouteRow): LoadProgress {
+  const done = row.lines_confirmed >= row.lines_total && row.lines_total > 0;
+  return {
+    lines: row.lines_total,
+    confirmed: row.lines_confirmed,
+    outstanding: row.lines_total - row.lines_confirmed,
+    flags: row.open_flags,
+    stops: row.stop_count,
+    stopsConfirmed: done ? row.stop_count : 0,
+    weightKg: 0,
+    volumeM3: 0,
+  };
+}
 
-/** The load list each vehicle starts the shift with, by vehicle. */
-export const LOAD_PLANS: Record<string, LoadStop[]> = Object.fromEntries(
-  RUNS.map(({ seed, stops }) => [seed.id, stops]),
-);
+/** The server's load list as stops in load order (the last stop to deliver comes first). */
+export function toStops(rows: LoadLineRow[]): LoadStop[] {
+  const stops = new Map<number, LoadStop>();
+  for (const r of rows) {
+    let stop = stops.get(r.stop_id);
+    if (!stop) {
+      stop = { stop: r.stop_seq, stopId: r.stop_id, outlet: r.outlet_name, unload: UNLOAD[r.unload] ?? r.unload,
+               deliverBy: formatTime(r.planned_arrival), lines: [] };
+      stops.set(r.stop_id, stop);
+    }
+    const units = Number(r.ordered_qty);
+    const loaded = r.qty_loaded === null ? null : Number(r.qty_loaded);
+    const flagType = r.flag_type ? capitalise(r.flag_type) : null;
+    stop.lines.push({
+      id: `${r.order_id}-${r.line_no}`,
+      orderId: r.order_id,
+      lineNo: r.line_no,
+      product: r.product_name,
+      units,
+      unit: r.unit,
+      tag: r.line_temp === "chilled" ? "Chilled" : r.fragile ? "Fragile" : r.hanging ? "Hanging" : "Dry",
+      weightKg: units * Number(r.unit_weight_kg),
+      volumeM3: units * Number(r.unit_volume_m3),
+      confirmed: loaded !== null,
+      flag: flagType
+        ? {
+            type: flagType,
+            units: Number(r.flag_qty ?? (flagType === "Missing" ? units : units - (loaded ?? units))),
+            photo: r.flag_photos > 0,
+            at: r.flagged_at ? formatTime(r.flagged_at) : "",
+            reply: r.dispatcher_reply,
+            sent: true,
+          }
+        : undefined,
+    });
+  }
+  return [...stops.values()].map((s) => ({ ...s, confirmed: s.lines.every((l) => l.confirmed) }));
+}
 
-export const VEHICLES: LoadingVehicle[] = RUNS.map(({ seed, stops }) => ({
-  id: seed.id,
-  type: seed.type,
-  departs: seed.departs,
-  stops: stops.length,
-  ...capacityFor(stops),
-}));
+// --------------------------------------------------------------- progress ----
 
 export type LoadProgress = {
   lines: number;
@@ -190,18 +233,16 @@ export function loadedShare(line: LoadLine) {
   return line.confirmed ? 1 : 0;
 }
 
+/** The quantity that goes on board for a line, which is what the stop sign-off reports. */
+export function loadedQty(line: LoadLine) {
+  if (!line.flag) return line.units;
+  return line.flag.type === "Missing" ? 0 : Math.max(0, line.units - line.flag.units);
+}
+
 export function progressOf(stops: LoadStop[]): LoadProgress {
   const progress: LoadProgress = {
-    lines: 0,
-    confirmed: 0,
-    outstanding: 0,
-    flags: 0,
-    stops: stops.length,
-    stopsConfirmed: 0,
-    weightKg: 0,
-    volumeM3: 0,
+    lines: 0, confirmed: 0, outstanding: 0, flags: 0, stops: stops.length, stopsConfirmed: 0, weightKg: 0, volumeM3: 0,
   };
-
   for (const stop of stops) {
     if (stop.confirmed) progress.stopsConfirmed += 1;
     for (const line of stop.lines) {
@@ -214,7 +255,6 @@ export function progressOf(stops: LoadStop[]): LoadProgress {
       progress.volumeM3 += line.volumeM3 * share;
     }
   }
-
   return progress;
 }
 
@@ -226,6 +266,7 @@ export function isFullyLoaded(progress: LoadProgress) {
 /** One status per vehicle, derived so a plan change shows up without touching the card. */
 export function vehicleStatus(vehicle: LoadingVehicle, progress: LoadProgress): { tone: Tone; label: string } {
   if (vehicle.planChanged) return { tone: "warn", label: "▲ Plan changed" };
+  if (vehicle.released) return { tone: "good", label: "✓ Released to driver" };
   if (isFullyLoaded(progress)) return { tone: "good", label: "✓ Ready to release" };
   if (progress.confirmed > 0) return { tone: "info", label: "● Loading" };
   return { tone: "offline", label: "○ Not started" };
@@ -253,18 +294,6 @@ export function flagLabel(line: LoadLine) {
   return `${flag.units} ${line.unit} ${flag.type.toLowerCase()}`;
 }
 
-export type PlanVersion = { version: string; at: string };
-
-/** A plan the dispatcher re-issued to this dock, for one vehicle. */
-export type PlanChange = {
-  plan: PlanVersion;
-  vehicleId: string;
-  /** The new departure time, when the plan moved it. */
-  departs?: string;
-  /** Stops whose order or contents changed, when the plan re-ordered the run. */
-  changedStops?: number;
-};
-
 /**
  * The queue is worked in departure order, so it is always sorted by time rather
  * than by the order the vehicles arrived in. Times are zero-padded 24h, which
@@ -273,57 +302,3 @@ export type PlanChange = {
 export function sortByDeparture(vehicles: LoadingVehicle[]) {
   return [...vehicles].sort((a, b) => a.departs.localeCompare(b.departs));
 }
-
-/** Falls back to the first vehicle so a screen always has one to render. */
-export function findVehicle(vehicles: LoadingVehicle[], id: string) {
-  return vehicles.find((v) => v.id === id) ?? vehicles[0];
-}
-
-/**
- * Applies a re-issued plan: the vehicle keeps its new departure time, is marked
- * so the loader can see what changed, and the queue re-sorts around it.
- */
-export function applyPlanChange(vehicles: LoadingVehicle[], change: PlanChange) {
-  return sortByDeparture(
-    vehicles.map((vehicle) => {
-      if (vehicle.id !== change.vehicleId) return vehicle;
-      const retimed = change.departs !== undefined && change.departs !== vehicle.departs;
-      return {
-        ...vehicle,
-        departs: change.departs ?? vehicle.departs,
-        retimedFrom: retimed ? vehicle.departs : vehicle.retimedFrom,
-        changedStops: change.changedStops ?? vehicle.changedStops,
-        planChanged: true,
-      };
-    }),
-  );
-}
-
-/**
- * Clears the notice once the loader has opened that vehicle's new load list.
- * The new departure time and where it moved the vehicle to are not a notice, so
- * `retimedFrom` stays on the card for the rest of the shift.
- */
-export function acknowledgePlanChange(vehicles: LoadingVehicle[], id: string) {
-  return vehicles.map((vehicle) =>
-    vehicle.id === id ? { ...vehicle, planChanged: undefined, changedStops: undefined } : vehicle,
-  );
-}
-
-export const INITIAL_PLAN: PlanVersion = { version: "v18", at: "03:48" };
-
-/** Changes that arrived before this shift opened the tablet. */
-export const RECEIVED_PLAN_CHANGES: PlanChange[] = [
-  { plan: INITIAL_PLAN, vehicleId: "RT-05", changedStops: 2 },
-];
-
-/**
- * Changes the dispatcher has yet to re-issue. Stand-in for the live plan
- * subscription: `use-plan-feed` delivers them on a timer so the queue behaves
- * the way it will once the feed is real.
- */
-export const INCOMING_PLAN_CHANGES: PlanChange[] = [
-  { plan: { version: "v19", at: "04:06" }, vehicleId: "RT-02", departs: "05:20" },
-];
-
-export const PLAN_FEED_DELAY_MS = 6000;

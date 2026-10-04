@@ -18,7 +18,16 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* values are baked into the browser bundle at build time, so they arrive as build args
+# (docker-compose.yml). Secrets such as CLERK_SECRET_KEY are runtime env only, never in the image.
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_AUTH_MODE=local
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+ARG NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/
+ARG NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL     NEXT_PUBLIC_AUTH_MODE=$NEXT_PUBLIC_AUTH_MODE     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY     NEXT_PUBLIC_CLERK_SIGN_IN_URL=$NEXT_PUBLIC_CLERK_SIGN_IN_URL     NEXT_PUBLIC_CLERK_SIGN_UP_URL=$NEXT_PUBLIC_CLERK_SIGN_UP_URL     NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=$NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL     NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=$NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL     NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
 
 # Runtime
@@ -41,6 +50,6 @@ USER nextjs
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+    CMD node -e "require('http').get('http://localhost:3000/sign-in', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 CMD ["node", "server.js"]

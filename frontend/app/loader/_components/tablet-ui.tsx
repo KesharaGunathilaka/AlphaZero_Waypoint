@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
+import { AccountButton } from "@/components/waypoint/account-button";
 import { cn } from "@/lib/utils";
 import type { Tone } from "@/components/waypoint/status";
-import type { PlanVersion } from "./data";
+import type { useOutbox } from "@/lib/offline/outbox";
 
 // Building blocks for the loader's shared dock tablet: dark theme, 56px+ touch targets.
 
@@ -10,7 +11,8 @@ export function TabletScreen({ label, children, className }: { label: string; ch
     <section
       data-screen-label={label}
       className={cn(
-        "flex min-h-[800px] w-[1280px] max-w-full flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-canvas text-wp-text",
+        // Full screen on the dock tablet itself; framed at 1280 px only on a larger monitor (demo).
+        "flex min-h-[100dvh] w-full flex-col bg-wp-canvas text-wp-text xl:min-h-[800px] xl:w-[1280px] xl:overflow-hidden xl:rounded-xl xl:border xl:border-wp-border",
         className,
       )}
     >
@@ -42,15 +44,21 @@ export function TabletPill({ tone, children, className }: { tone: Tone; children
   );
 }
 
-/** Who is signed in to the shared tablet, and which plan the dock is working to. */
-export function LiveStatus({ plan }: { plan: PlanVersion }) {
+export type Outbox = ReturnType<typeof useOutbox>;
+
+/** Who is signed in to the shared tablet, whether the dock is online, and what is waiting to send. */
+export function LiveStatus({ who, outbox, plan }: { who: string; outbox: Outbox; plan?: { version: string } | null }) {
+  const state: { tone: Tone; text: string } = !outbox.online
+    ? { tone: "offline", text: `⊘ Offline · ${outbox.pending} saved on tablet` }
+    : outbox.pending > 0
+      ? { tone: "info", text: `● Sending ${outbox.pending}…` }
+      : { tone: "good", text: "● Live" };
   return (
-    <div className="flex items-center gap-4">
-      <span className="text-wp-text-2">Nuwan</span>
-      <TabletPill tone="good">● Live</TabletPill>
-      <span className="font-semibold">
-        Plan {plan.version} · {plan.at}
-      </span>
+    <div className="flex flex-wrap items-center gap-3">
+      <TabletPill tone={state.tone}>{state.text}</TabletPill>
+      {plan && <span className="font-semibold">Plan {plan.version}</span>}
+      <span className="text-wp-text-2">{who}</span>
+      <AccountButton />
     </div>
   );
 }

@@ -2,16 +2,21 @@
 
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { formatTime } from "@/lib/format";
 import { MenuButton, NavDrawer } from "./driver-nav";
+import { useRun } from "./use-run";
 
 // Building blocks for the driver's phone screens: large type and 44–56px touch targets.
 
-/** A 360×800 handset — the small end of the phones drivers actually carry. */
+/**
+ * The driver's screen. On a phone it fills the whole display (every pixel is for the road, not a frame);
+ * on a bigger screen (demo, office) it shows as a 360×800 handset, the small end of the phones drivers carry.
+ */
 export function PhoneScreen({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div
       data-screen-label={label}
-      className="relative flex h-[800px] max-h-[calc(100dvh-2rem)] max-sm:max-h-[calc(100dvh-6rem)] w-[360px] max-w-full flex-col overflow-hidden rounded-[22px] border border-wp-border bg-wp-canvas text-base shadow-lg"
+      className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-wp-canvas text-base sm:h-[800px] sm:max-h-[calc(100dvh-2rem)] sm:w-[360px] sm:rounded-[22px] sm:border sm:border-wp-border sm:shadow-lg"
     >
       {children}
       <NavDrawer />
@@ -30,7 +35,8 @@ export function TopBar({ children }: { children: ReactNode }) {
 }
 
 export function BottomBar({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("border-t border-wp-border bg-wp-surface px-4 py-3", className)}>{children}</div>;
+  // Safe-area padding keeps the buttons clear of the phone's home bar.
+  return <div className={cn("border-t border-wp-border bg-wp-surface px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]", className)}>{children}</div>;
 }
 
 export function Body({ children, className }: { children: ReactNode; className?: string }) {
@@ -109,14 +115,61 @@ export function ChoiceTile({
   );
 }
 
-export function SyncPill({ offline, pending = 3 }: { offline: boolean; pending?: number }) {
-  return offline ? (
-    <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold text-wp-offline">
-      ○ Offline · {pending} to send
+/** Where the phone's records are: all sent, sending, or waiting for signal. Never claims more than it knows. */
+export function SyncPill() {
+  const { outbox } = useRun();
+  if (!outbox.online) {
+    return (
+      <div className="rounded-full bg-wp-offline-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-offline">
+        ○ No signal · {outbox.pending} to send
+      </div>
+    );
+  }
+  if (outbox.pending > 0) {
+    return (
+      <div className="rounded-full bg-wp-info-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-info">
+        ● Sending {outbox.pending}…
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold whitespace-nowrap text-wp-good">
+      ✓ All sent{outbox.lastSyncAt ? ` ${formatTime(outbox.lastSyncAt)}` : ""}
     </div>
-  ) : (
-    <div className="rounded-full bg-wp-good-tint px-3 py-1.5 text-[13px] font-semibold text-wp-good">
-      ✓ Synced 06:31
-    </div>
+  );
+}
+
+/**
+ * The degradation screen's message: working without signal is normal, and nothing is lost.
+ * Records the server refused (a stop changed by dispatch, say) are listed, never dropped silently.
+ */
+export function OfflineBanner() {
+  const { outbox, fromCache, run } = useRun();
+  return (
+    <>
+      {!outbox.online && (
+        <div className="rounded-xl bg-wp-offline-tint p-3 leading-[22px] font-semibold text-wp-offline">
+          ○ No signal{outbox.simulated ? " (simulated)" : ""}. Everything you record is saved on this phone and sent
+          when signal returns.
+          {outbox.pending > 0 && <div className="text-[13px] font-normal">{outbox.pending} {outbox.pending === 1 ? "record" : "records"} (arrivals, deliveries) waiting to send.</div>}
+        </div>
+      )}
+      {outbox.online && fromCache && run && (
+        <div className="rounded-xl bg-wp-info-tint p-3 text-[13px] leading-[18px] font-semibold text-wp-info">
+          ● Showing the run saved on this phone. Updating…
+        </div>
+      )}
+      {outbox.rejected.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-xl border border-wp-warn bg-wp-warn-tint p-3 text-[13px] leading-[18px] text-wp-warn">
+          <b>▲ Dispatch did not accept {outbox.rejected.length === 1 ? "a record" : `${outbox.rejected.length} records`}:</b>
+          {outbox.rejected.slice(0, 3).map((r) => (
+            <span key={r.event_id}>{r.reject_reason}</span>
+          ))}
+          <button type="button" onClick={outbox.dismissRejected} className="self-start font-semibold underline">
+            Got it · call dispatch if unsure
+          </button>
+        </div>
+      )}
+    </>
   );
 }
