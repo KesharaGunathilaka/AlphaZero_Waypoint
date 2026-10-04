@@ -7,6 +7,7 @@ import { Logo } from "@/components/waypoint/logo";
 import { Banner } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, todayIso } from "@/lib/format";
+import { AUTH_MODE } from "@/lib/auth-mode";
 import { cn } from "@/lib/utils";
 import type { Depots, Me, PlanView, Runs, Violation } from "./data";
 import { Deferrals } from "./deferrals";
@@ -173,9 +174,11 @@ export function DispatcherApp() {
                 ))}
               </Select>
             )}
-            <Button variant="secondary" className="hidden h-9 md:inline-flex" onClick={resetDemo} disabled={busy} title="Demo only: wipe and seed a fresh day">
-              Reset demo
-            </Button>
+            {AUTH_MODE === "local" && (
+              <Button variant="secondary" className="hidden h-9 md:inline-flex" onClick={resetDemo} disabled={busy} title="Demo only: wipe and seed a fresh day">
+                Reset demo
+              </Button>
+            )}
             <AccountButton />
           </div>
         </div>
@@ -197,10 +200,12 @@ export function DispatcherApp() {
               )}
             </button>
           ))}
-          <button type="button" onClick={resetDemo} disabled={busy}
-                  className="ml-auto h-11 shrink-0 cursor-pointer px-3 text-[12px] font-semibold text-wp-text-2 underline md:hidden">
-            Reset demo
-          </button>
+          {AUTH_MODE === "local" && (
+            <button type="button" onClick={resetDemo} disabled={busy}
+                    className="ml-auto h-11 shrink-0 cursor-pointer px-3 text-[12px] font-semibold text-wp-text-2 underline md:hidden">
+              Reset demo
+            </button>
+          )}
         </nav>
       </header>
 

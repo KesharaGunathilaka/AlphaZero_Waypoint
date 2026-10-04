@@ -59,7 +59,7 @@ the same email as a seeded account (table below). The database role is what coun
 | GET | `/dispatch/monitor` | | `runs` progress, `fleet` (with `last_seen_at`, `no_signal`), `exceptions` (failed, flags, short loaded, no signal, late, conflicts) |
 | POST | `/dispatch/flags/{flag_id}/reply` | `{type: proceed_short\|hold\|note…, text?, resolve?}` | Answer a loader/driver flag |
 | GET | `/dispatch/ledger` | | every deferral and delivery |
-| POST | `/demo/reset` | | Fresh demo day (wipes orders/plans/deliveries) |
+| POST | `/demo/reset` | | Fresh demo day (wipes orders/plans/deliveries). Local sign-in and local test runs only; 404 when the API uses Clerk |
 
 ## Loader (tablet)
 

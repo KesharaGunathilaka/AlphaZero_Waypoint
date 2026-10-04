@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, CurrentUserDep, DbSession, require_roles
 from app import storage
+from app.config import get_settings
 from app.modules.common import not_found, one, rows, scalar
 
 router = APIRouter(tags=["Loader and driver"])
@@ -223,7 +224,13 @@ async def raw(attachment_id: UUID, expires: int, signature: str, db: DbSession):
 # ------------------------------------------------------------------ demo ----
 @router.post("/demo/reset")
 async def demo_reset(user: Annotated[CurrentUser, Depends(require_roles("dispatcher"))], db: DbSession):
-    """Wipe orders, plans and deliveries and seed a fresh demo day (next open service date)."""
+    """Wipe orders, plans and deliveries and seed a fresh demo day (next open service date).
+
+    Only for the Docker delivery (local sign-in) and local test runs: the deployed app (Clerk) never wipes its data.
+    """
+    s = get_settings()
+    if s.AUTH_MODE != "local" and not (s.AUTH_DEV_BYPASS and s.ENVIRONMENT == "development"):
+        raise not_found("Page")
     result = await scalar(db, "SELECT demo_reset()")
     await db.commit()
     return result

@@ -80,7 +80,9 @@ the dispatcher switches to Peliyagoda with the depot selector in the header.
    *Report issue* on a line. `store.out078` sees "Not arriving on Tuesday" and the reason.
 7. **Dispatcher** → *Records*: every deferral and delivery with who decided, when and why (CSV export).
 
-*Reset demo* (dispatcher header) wipes the day and seeds a fresh one.
+*Reset demo* (dispatcher header) wipes the day and seeds a fresh one. *Reset demo* and the driver's
+*Simulate no signal* are demo controls: they exist only with local sign-in (this Docker delivery); the
+deployed app (Clerk) hides them and its API refuses the reset.
 
 ## The rules (Challenge Booklet) and where they are enforced
 

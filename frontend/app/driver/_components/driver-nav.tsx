@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { AccountButton } from "@/components/waypoint/account-button";
+import { AUTH_MODE } from "@/lib/auth-mode";
 import { cn } from "@/lib/utils";
 import { DISPATCHER } from "./data";
 import { useRun } from "./use-run";
@@ -152,13 +153,16 @@ export function NavDrawer() {
           })}
         </div>
 
-        <label className="mx-3 mb-2 flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-[10px] border border-dashed border-wp-border px-3 text-[13px] font-semibold">
-          <span>
-            Simulate no signal
-            <span className="block text-[11px] font-normal text-wp-text-2">Demo: records wait on the phone</span>
-          </span>
-          <input type="checkbox" className="size-5" checked={outbox.simulated} onChange={(e) => outbox.simulate(e.target.checked)} />
-        </label>
+        {/* A demo control: the Docker delivery shows it; the deployed app (Clerk) does not. */}
+        {AUTH_MODE === "local" && (
+          <label className="mx-3 mb-2 flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-[10px] border border-dashed border-wp-border px-3 text-[13px] font-semibold">
+            <span>
+              Simulate no signal
+              <span className="block text-[11px] font-normal text-wp-text-2">Demo: records wait on the phone</span>
+            </span>
+            <input type="checkbox" className="size-5" checked={outbox.simulated} onChange={(e) => outbox.simulate(e.target.checked)} />
+          </label>
+        )}
         <div className="flex flex-col gap-2 border-t border-wp-border p-3">
           <a
             href={`tel:${DISPATCHER.tel}`}
