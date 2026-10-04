@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.auth import bearer_scheme, get_current_token_payload
+from app.auth.local import read_token
 from app.config import get_settings
 from app.db.session import begin_transaction, get_db
 
@@ -62,6 +63,11 @@ async def get_current_user(
     dev_email = request.headers.get("X-Dev-User")
     if settings.AUTH_DEV_BYPASS and settings.ENVIRONMENT == "development" and dev_email:
         row = (await db.execute(text(_USER_SQL.format(where="lower(email) = lower(:e)")), {"e": dev_email})).mappings().first()
+    elif settings.AUTH_MODE == "local":
+        if credentials is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
+        sub = read_token(credentials.credentials)["sub"]
+        row = (await db.execute(text(_USER_SQL.format(where="user_id = :u")), {"u": int(sub)})).mappings().first()
     else:
         payload = await get_current_token_payload(credentials)
         sub = payload.get("sub")

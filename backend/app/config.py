@@ -63,6 +63,12 @@ class Settings(BaseSettings):
                 args["prepared_statement_name_func"] = lambda: f"__asyncpg_{uuid4()}__"
         return args
 
+    # Sign-in. "clerk" = the deployed app (Clerk tokens). "local" = the Docker delivery: the API checks
+    # email + password against wp.app_user and signs its own tokens with LOCAL_AUTH_SECRET.
+    AUTH_MODE: Literal["clerk", "local"] = "clerk"
+    LOCAL_AUTH_SECRET: SecretStr = SecretStr("")  # HS256 key, at least 32 characters; shared with the web app
+    LOCAL_TOKEN_HOURS: PositiveInt = 12
+
     # Clerk
     CLERK_JWKS_URL: str = ""  # e.g. https://<your-domain>.clerk.accounts.dev/.well-known/jwks.json
     CLERK_ISSUER: str = ""
@@ -88,10 +94,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_security(self) -> Self:
+        if self.AUTH_MODE == "local" and len(self.LOCAL_AUTH_SECRET.get_secret_value()) < 32:
+            raise ValueError("LOCAL_AUTH_SECRET must be at least 32 characters when AUTH_MODE=local")
         if self.ENVIRONMENT == "production":
             if self.DEBUG:
                 raise ValueError("DEBUG must be False in production")
-            if not self.CLERK_AUTHORIZED_PARTIES:
+            if self.AUTH_MODE == "clerk" and not self.CLERK_AUTHORIZED_PARTIES:
                 raise ValueError("CLERK_AUTHORIZED_PARTIES must be set in production")
             if not self.CORS_ORIGINS or "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must be explicit in production")

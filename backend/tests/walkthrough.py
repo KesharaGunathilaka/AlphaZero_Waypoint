@@ -6,7 +6,6 @@ Run against a database loaded with db/load.sh (it calls /demo/reset first, so al
     DATABASE_URL=postgresql://waypoint:waypoint@localhost:5433/waypoint?sslmode=disable \
     uv run python tests/walkthrough.py
 """
-import json
 import uuid
 from datetime import datetime, timezone
 
@@ -21,7 +20,8 @@ def as_(email):
 
 SM, DSP, LDR, DRV = (as_("store.out077@waypoint.demo"), as_("dispatcher@waypoint.demo"),
                      as_("loader.kandy@waypoint.demo"), as_("driver.veh057@waypoint.demo"))
-now = lambda: datetime.now(timezone.utc).isoformat()
+def now():
+    return datetime.now(timezone.utc).isoformat()
 
 
 def ok(r, code=200):
@@ -33,9 +33,11 @@ with TestClient(app) as c:
     print("1 reset:", ok(c.post("/api/v1/demo/reset", headers=DSP)))
 
     # Store manager places OUT077's dry order
-    me = ok(c.get("/api/v1/me", headers=SM)); print("2 me:", me["name"], me["outlet_code"])
+    me = ok(c.get("/api/v1/me", headers=SM))
+    print("2 me:", me["name"], me["outlet_code"])
     prods = ok(c.get("/api/v1/store/products", params={"temp": "ambient"}, headers=SM))
-    slot = ok(c.get("/api/v1/store/order-slot", params={"temp": "ambient"}, headers=SM)); print("  slot:", slot["delivery_date"], slot["cutoff_at"])
+    slot = ok(c.get("/api/v1/store/order-slot", params={"temp": "ambient"}, headers=SM))
+    print("  slot:", slot["delivery_date"], slot["cutoff_at"])
     rid = str(uuid.uuid4())
     body = {"client_request_id": rid, "temp": "ambient", "lines": [{"product_id": prods[0]["product_id"], "qty": 28}]}
     o1 = ok(c.post("/api/v1/store/orders", json=body, headers=SM), 201)
@@ -48,7 +50,8 @@ with TestClient(app) as c:
     # Dispatcher closes orders, engine proposes, release
     runs = ok(c.get("/api/v1/dispatch/runs", headers=DSP))
     day = runs["next_open_date"]
-    closed = ok(c.post(f"/api/v1/dispatch/runs/{day}/close", headers=DSP)); print("3 closed:", closed)
+    closed = ok(c.post(f"/api/v1/dispatch/runs/{day}/close", headers=DSP))
+    print("3 closed:", closed)
     pid = closed["plan_id"]
     prop = ok(c.post(f"/api/v1/dispatch/plans/{pid}/propose", headers=DSP))
     print("  engine:", prop["trips"], "trips,", prop["orders_planned"], "orders; deferred:", prop["orders_deferred"])
@@ -64,26 +67,28 @@ with TestClient(app) as c:
     oo77 = next(o for rt in plan["routes"] for s in rt["stops"] for o in s["orders"] if s["outlet_code"] == "OUT077" and o["temp"] == "chilled")
     r = c.post(f"/api/v1/dispatch/plans/{pid}/move", json={"order_id": oo77["order_id"], "vehicle_id": truck["vehicle_id"], "seq": 2}, headers=DSP)
     print("  move van-only to truck:", r.status_code, r.json()["detail"])
-    rel = ok(c.post(f"/api/v1/dispatch/plans/{pid}/release", headers=DSP)); print("  released:", rel)
+    rel = ok(c.post(f"/api/v1/dispatch/plans/{pid}/release", headers=DSP))
+    print("  released:", rel)
 
     # OUT078's manager sees the deferral notice
     n78 = ok(c.get("/api/v1/store/notices", headers=as_("store.out078@waypoint.demo")))
     print("4 OUT078 notices:", [n["title"] + " | " + n["body"] for n in n78 if n["kind"] == "deferred"])
 
     # Loader loads VEH057's trip with OUT077, short 2 crates on OUT079
-    routes = ok(c.get("/api/v1/loader/routes", headers=LDR))
+    routes = ok(c.get("/api/v1/loader/routes", headers=LDR))["routes"]
     print("5 loader sees", len(routes), "trips")
     rt = next(r for r in plan["routes"] if any(s["outlet_code"] == "OUT077" for s in r["stops"]) and r["vehicle_code"].startswith("RV"))
     ll = ok(c.get(f"/api/v1/loader/routes/{rt['route_id']}", headers=LDR))
-    print("  load order:", [(l["load_order"], l["outlet_name"].split()[-1]) for l in ll["lines"]])
+    print("  load order:", [(x["load_order"], x["outlet_name"].split()[-1]) for x in ll["lines"]])
     dev_l = str(uuid.uuid4())
     lines, flag_id = [], str(uuid.uuid4())
     short_line = None
-    for l in ll["lines"]:
-        qty = float(l["ordered_qty"])
-        if l["outlet_name"].endswith("OUT079") and short_line is None:
-            qty -= 2; short_line = l
-        lines.append({"confirmation_id": str(uuid.uuid4()), "order_id": l["order_id"], "line_no": l["line_no"], "qty_loaded": qty})
+    for line in ll["lines"]:
+        qty = float(line["ordered_qty"])
+        if line["outlet_name"].endswith("OUT079") and short_line is None:
+            qty -= 2
+            short_line = line
+        lines.append({"confirmation_id": str(uuid.uuid4()), "order_id": line["order_id"], "line_no": line["line_no"], "qty_loaded": qty})
     events = [
         {"event_id": str(uuid.uuid4()), "type": "load_confirm", "route_id": rt["route_id"], "payload": {"lines": lines}, "device_time": now()},
         {"event_id": str(uuid.uuid4()), "type": "flag", "route_id": rt["route_id"], "device_time": now(),

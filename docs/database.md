@@ -7,7 +7,7 @@ PostgreSQL **18** everywhere (Neon runs 18; Docker uses `postgres:18-alpine`). A
 | `db/waypoint_schema.sql` | Creates schema `wp`: tables, relationships, the booklet's rules (triggers + `plan_violations()`), workflow functions, views, roles, and fixed reference rows not in the CSVs (brands, depots, vehicle classes, proof rule, reason codes). Run **once** on an empty database. |
 | `db/waypoint_import.sql` | Loads the 7 CSVs in `data/general/`. Safe to run again (updates rows in place). |
 | `db/init/10-load-waypoint.sh` | Runs both automatically inside the Docker `db` container on its first start. |
-| `db/migrations/*.sql` | Changes after the base schema (001: driver per vehicle, photo storage, `demo_reset()`). Safe to re-run. |
+| `db/migrations/*.sql` | Changes after the base schema (001: driver per vehicle, photo storage, `demo_reset()`; 002: a run closed early counts as past its cutoff). Safe to re-run. |
 | `db/load.sh` | Runs all of it against any database URL (Neon). |
 
 ## Local: Docker
@@ -68,7 +68,7 @@ Check: Neon SQL Editor → `SELECT count(*) FROM wp.outlet;` → 120 (Tables pag
 | Delivery / mall windows; early vehicles wait | `retime_route` (waits), `plan_violations` (`window`) |
 | Weekly fuel quota (route distance) | `fuel_left`, `plan_violations` (`fuel`) |
 | Vehicles in the workshop cannot run | `vehicle.active`, `plan_violations` (`vehicle_unavailable`) |
-| Operating days; orders close 16:00 for the next operating day | `is_working_day`, `run_cutoff`, `next_delivery_date` |
+| Operating days; orders close 16:00 for the next operating day; later orders wait for the following run | `is_working_day`, `run_cutoff`, `next_delivery_date` (a closed run counts as past its cutoff) |
 | Deferrals recorded with a reason, store told | `defer_order` → `deferral` + `notice` |
 
 ## Changes from the team's original SQL (and why)
@@ -87,3 +87,10 @@ Added — in the booklet but missing:
 - Route distance includes the return leg (it is what uses the fuel quota).
 
 Fixed: `free_flow_kmh` staged as `numeric` (the CSV holds `30.0`).
+
+## Checking the rules
+
+`backend/tests/rules_audit.py` re-checks every booklet rule on the engine's plans straight from
+`data/general/*.csv` (Kandy demo day, a Peliyagoda peak day with two refrigerated vehicles in the
+workshop, and the next day's run), searches for avoidable deferrals, and tries every way of breaking a
+rule by hand through the API. It resets the demo data, so run it locally (see the file header).

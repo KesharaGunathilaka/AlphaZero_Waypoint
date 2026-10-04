@@ -159,6 +159,14 @@ async def move_order(plan_id: int, body: MoveIn, user: Dispatcher, db: DbSession
         WHERE h.order_id = :o""", {"o": body.order_id})
     if order is None:
         raise not_found("Order")
+    vehicle = await one(db, "SELECT code, depot_id, active FROM vehicle WHERE vehicle_id = :v", {"v": body.vehicle_id})
+    if vehicle is None:
+        raise not_found("Vehicle")
+    if vehicle["depot_id"] != plan["depot_id"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "depot", "message": f"{vehicle['code']} belongs to another depot"})
+    if not vehicle["active"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "vehicle_unavailable",
+                                                       "message": f"{vehicle['code']} is in the workshop"})
     route = await one(db, "SELECT * FROM route WHERE plan_id = :p AND vehicle_id = :v AND seq = :s AND state <> 'cancelled'",
                       {"p": plan_id, "v": body.vehicle_id, "s": body.seq})
     if route is None:
@@ -196,6 +204,9 @@ async def move_order(plan_id: int, body: MoveIn, user: Dispatcher, db: DbSession
 async def defer(plan_id: int, body: DeferIn, user: Dispatcher, db: DbSession):
     """Decide to defer an order (drafted; applied when the plan is released)."""
     await _plan(db, plan_id, user)
+    if not await scalar(db, "SELECT EXISTS (SELECT 1 FROM reason_code WHERE scope = 'deferral' AND code = :r AND active)",
+                        {"r": body.reason_code}):
+        raise HTTPException(status.HTTP_409_CONFLICT, {"code": "reason", "message": "Pick one of the deferral reasons"})
     await scalar(db, "SELECT draft_deferral(:p, :o, :r, :n, :u)",
                  {"p": plan_id, "o": body.order_id, "r": body.reason_code, "n": body.note, "u": user.user_id})
     await _tidy(db, plan_id, user)

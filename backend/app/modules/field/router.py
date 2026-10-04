@@ -55,21 +55,38 @@ async def me(user: CurrentUserDep, db: DbSession):
 # ---------------------------------------------------------------- loader ----
 @router.get("/loader/routes")
 async def loader_routes(user: Loader, db: DbSession):
-    """Trips of released plans still to load or leave, earliest departure first."""
-    return await rows(db, """
-        SELECT * FROM route_board
-        WHERE depot_id = :d AND plan_version > 0 AND state IN ('planned', 'loading', 'loaded')
-        ORDER BY depart_at""", {"d": user.depot_id})
+    """Trips of released plans still to load or leave, earliest departure first, and plan changes
+    the dock has not acknowledged yet (opening the vehicle acknowledges them with a plan_ack event)."""
+    routes = await rows(db, """
+        SELECT rb.*, v.source_id AS vehicle_source_id, pv.released_at AS plan_released_at
+        FROM route_board rb JOIN vehicle v ON v.vehicle_id = rb.vehicle_id
+        LEFT JOIN plan_version pv ON pv.plan_id = rb.plan_id AND pv.version = rb.plan_version
+        WHERE rb.depot_id = :d AND rb.plan_version > 0 AND rb.state IN ('planned', 'loading', 'loaded')
+        ORDER BY rb.depart_at""", {"d": user.depot_id})
+    changes = await rows(db, """
+        SELECT pc.change_id, pc.route_id, pc.version, pc.changed_stops, pc.changed_orders, pc.created_at,
+               (pc.detail ->> 'route_header_changed')::boolean AS retimed
+        FROM plan_change pc JOIN route r ON r.route_id = pc.route_id
+        WHERE r.depot_id = :d AND r.state IN ('planned', 'loading', 'loaded')
+          AND NOT EXISTS (SELECT 1 FROM plan_change_ack a WHERE a.change_id = pc.change_id AND a.audience = 'loader')
+        ORDER BY pc.created_at DESC""", {"d": user.depot_id})
+    return {"routes": routes, "changes": changes}
 
 
 @router.get("/loader/routes/{route_id}")
 async def load_list(route_id: int, user: Loader, db: DbSession):
     """Load list in reverse stop order (last stop loaded first) with flags and dispatcher replies."""
-    route = await one(db, "SELECT * FROM route_board WHERE route_id = :r", {"r": route_id})
+    route = await one(db, """
+        SELECT rb.*, v.source_id AS vehicle_source_id FROM route_board rb JOIN vehicle v ON v.vehicle_id = rb.vehicle_id
+        WHERE rb.route_id = :r""", {"r": route_id})
     if route is None:
         raise not_found("Route")
-    route["lines"] = await rows(db, "SELECT * FROM load_list WHERE route_id = :r ORDER BY load_order, stop_id, order_id, line_no",
-                                {"r": route_id})
+    route["lines"] = await rows(db, """
+        SELECT ll.*, s.planned_arrival, p.unit_weight_kg, p.unit_volume_m3, f.qty AS flag_qty, f.note AS flag_note,
+               (SELECT count(*) FROM attachment a WHERE a.flag_id = ll.flag_id) AS flag_photos
+        FROM load_list ll JOIN stop s ON s.stop_id = ll.stop_id JOIN product p ON p.sku = ll.sku
+        LEFT JOIN flag f ON f.flag_id = ll.flag_id
+        WHERE ll.route_id = :r ORDER BY ll.load_order, ll.stop_id, ll.order_id, ll.line_no""", {"r": route_id})
     return route
 
 
@@ -87,15 +104,34 @@ async def driver_run(user: Driver, db: DbSession):
           AND p.service_date >= (now() AT TIME ZONE 'Asia/Colombo')::date - 1
         ORDER BY p.service_date""", {"u": user.user_id})
     done = await rows(db, """
-        SELECT d.order_id, d.outcome, d.device_time FROM current_delivery d WHERE d.driver_id = :u""", {"u": user.user_id})
+        SELECT d.delivery_id, d.order_id, d.stop_id, d.outcome, d.device_time FROM current_delivery d
+        WHERE d.driver_id = :u""", {"u": user.user_id})
     routes = await rows(db, "SELECT route_id, state, departed_at FROM route WHERE driver_id = :u AND state <> 'cancelled'",
                         {"u": user.user_id})
     instructions = await rows(db, """
         SELECT i.instruction_id, i.route_id, i.stop_id, i.type, i.text, i.sent_at, i.state
         FROM instruction i JOIN route r USING (route_id)
         WHERE r.driver_id = :u AND i.state IN ('sent', 'on_phone')""", {"u": user.user_id})
-    return {"plans": [p for p in plans if p["routes"]], "deliveries": done, "route_states": routes,
-            "instructions": instructions, "server_time": await scalar(db, "SELECT now()")}
+    # What the loader actually put on board (a shortfall changes what the driver can hand over).
+    loaded = await rows(db, """
+        SELECT DISTINCT ON (lc.order_id, lc.line_no) lc.order_id, lc.line_no, lc.qty_loaded
+        FROM load_confirmation lc JOIN route r ON r.route_id = lc.route_id
+        WHERE r.driver_id = :u ORDER BY lc.order_id, lc.line_no, lc.device_time DESC, lc.received_at DESC""",
+        {"u": user.user_id})
+    # Each stop's delivery (or mall) window on its service day: the "deliver by" the driver works to.
+    windows = await rows(db, """
+        SELECT s.stop_id, min(w.opens) AS opens, max(w.closes) AS closes
+        FROM stop s JOIN route r ON r.route_id = s.route_id JOIN plan p ON p.plan_id = r.plan_id
+        JOIN outlet_window w ON w.outlet_id = s.outlet_id AND w.isodow = EXTRACT(isodow FROM p.service_date)::smallint
+        WHERE r.driver_id = :u AND s.removed_at IS NULL GROUP BY s.stop_id""", {"u": user.user_id})
+    me = await one(db, """
+        SELECT u.name, v.source_id AS vehicle_source_id, v.code AS vehicle_code, c.name AS vehicle_class,
+               (SELECT name FROM depot WHERE depot_id = u.depot_id) AS depot
+        FROM app_user u LEFT JOIN vehicle v ON v.vehicle_id = u.vehicle_id LEFT JOIN vehicle_class c ON c.class_id = v.class_id
+        WHERE u.user_id = :u""", {"u": user.user_id})
+    return {"driver": me, "plans": [p for p in plans if p["routes"]], "deliveries": done, "route_states": routes,
+            "loaded": loaded, "windows": windows, "instructions": instructions,
+            "server_time": await scalar(db, "SELECT now()")}
 
 
 # ------------------------------------------------------------------ sync ----
@@ -117,6 +153,10 @@ async def sync(body: SyncIn, user: FieldUser, db: DbSession):
             SELECT ingest_event(:e, :d, :seq, :u, :t, :r, :s, CAST(:p AS jsonb), :dt, :now)""",
             {"e": e.event_id, "d": body.device_id, "seq": seq, "u": user.user_id, "t": e.type, "r": e.route_id,
              "s": e.stop_id, "p": e.payload, "dt": e.device_time, "now": body.client_now})
+    # Events that arrived before the record they depend on (a depart before the loader's release)
+    # wait as pending; every sync gives them another try, in device order.
+    await scalar(db, "SELECT apply_pending_events()")
+    for e in body.events:
         results.append(await one(db, "SELECT event_id, state, reject_reason FROM device_event WHERE event_id = :e",
                                  {"e": e.event_id}))
     await db.commit()

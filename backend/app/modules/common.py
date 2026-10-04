@@ -24,6 +24,8 @@ _CONSTRAINTS = [
     ("route_seq_check", "A vehicle runs at most two trips a day."),
     ("route_check", "A trip must return after it departs."),
     ("order_one_regular", "This outlet already has an order of this kind for that day."),
+    ("route_vehicle_id_depot_id_fkey", "That vehicle belongs to another depot."),
+    ("reason_code_fkey", "Pick one of the listed reasons."),
 ]
 
 

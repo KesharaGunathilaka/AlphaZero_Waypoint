@@ -1,4 +1,6 @@
 import { UserButton } from "@clerk/nextjs";
+import { LocalSignOut } from "@/components/auth/local-sign-out";
+import { AUTH_MODE } from "@/lib/auth-mode";
 import { ROLE_LABEL, type UserRole } from "@/lib/roles";
 
 /**
@@ -13,7 +15,7 @@ export function SessionBadge({ role, isAdmin }: { role: UserRole; isAdmin: boole
       <span className="text-[11px] font-semibold tracking-[.06em] text-wp-muted">
         {isAdmin ? `ADMIN · ${ROLE_LABEL[role].toUpperCase()}` : ROLE_LABEL[role].toUpperCase()}
       </span>
-      <UserButton />
+      {AUTH_MODE === "local" ? <LocalSignOut showName={false} /> : <UserButton />}
     </div>
   );
 }

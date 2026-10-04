@@ -1,14 +1,14 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiRequest, type RequestOptions } from "@/lib/api/client";
+import { useGetToken } from "@/lib/auth-client";
 
 type Request = <T>(path: string, options?: Omit<RequestOptions, "getToken">) => Promise<T>;
 
-/** `apiRequest` with the signed-in user's Clerk token attached. */
+/** `apiRequest` with the signed-in user's token attached (Clerk or local sign-in). */
 export function useApi(): Request {
-  const { getToken } = useAuth();
+  const getToken = useGetToken();
   return useCallback(
     <T,>(path: string, options: Omit<RequestOptions, "getToken"> = {}) =>
       apiRequest<T>(path, { ...options, getToken: () => getToken() }),
@@ -90,7 +90,7 @@ export function errorMessage(error: unknown): string {
 
 /** Upload a photo or signature (multipart) and get back its id and a short-lived view link. */
 export function useUpload() {
-  const { getToken } = useAuth();
+  const getToken = useGetToken();
   return useCallback(
     async (file: Blob, fields: Record<string, string>) => {
       const token = await getToken();

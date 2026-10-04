@@ -3,8 +3,11 @@
 --   * app_user.vehicle_id   the driver of each vehicle (booklet: "Each vehicle has a driver")
 --   * attachment_blob       photo and signature bytes (attachment keeps key, size, hash)
 --   * demo_reset()          products, role accounts and one demo delivery day (Kandy depot)
+--   * pgcrypto              password hashes for the local sign-in (Docker; the deployed app uses Clerk)
 -- =============================================================================
 SET search_path = wp, public;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
 
 ALTER TABLE app_user ADD COLUMN IF NOT EXISTS vehicle_id integer REFERENCES vehicle;
 CREATE UNIQUE INDEX IF NOT EXISTS app_user_vehicle_uq ON app_user (vehicle_id) WHERE vehicle_id IS NOT NULL;
@@ -79,11 +82,13 @@ BEGIN
     unit_weight_kg = EXCLUDED.unit_weight_kg, unit_volume_m3 = EXCLUDED.unit_volume_m3, active = true;
 
   -- Accounts. Emails are the sign-in names (Clerk links them by email on first sign-in).
-  INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id)
+  -- Local sign-in (Docker): every demo account's password is 'waypoint-demo' (bcrypt hash).
+  INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id, password_hash)
   SELECT v.role::wp.user_role, v.name, v.email,
          CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL ELSE (SELECT depot_id FROM wp.depot WHERE name = 'Kandy') END,
          (SELECT outlet_id FROM wp.outlet WHERE code = v.outlet),
-         (SELECT vehicle_id FROM wp.vehicle WHERE source_id = v.vehicle)
+         (SELECT vehicle_id FROM wp.vehicle WHERE source_id = v.vehicle),
+         public.crypt('waypoint-demo', public.gen_salt('bf', 8))
   FROM (VALUES
     ('dispatcher',    'Ruwan Perera',      'dispatcher@waypoint.demo',     NULL,     NULL),
     ('loader',        'Kasun Jayasinghe',  'loader.kandy@waypoint.demo',   NULL,     NULL),
@@ -95,7 +100,8 @@ BEGIN
     ('admin',         'Waypoint Admin',    'admin@waypoint.demo',          NULL,     NULL)
   ) AS v(role, name, email, outlet, vehicle)
   ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = EXCLUDED.name, depot_id = EXCLUDED.depot_id,
-    outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true;
+    outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true,
+    password_hash = COALESCE(wp.app_user.password_hash, EXCLUDED.password_hash);
 
   -- Day 5 assumption: VEH058 (refrigerated van, Kandy) is in the workshop; all others available.
   UPDATE wp.vehicle SET active = (source_id <> 'VEH058');
