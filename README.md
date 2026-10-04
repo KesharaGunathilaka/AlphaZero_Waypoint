@@ -46,7 +46,9 @@ tap one to sign in. All use the password **`waypoint-demo`**.
 | `driver.veh057@example.com` | Driver | VEH057 (refrigerated van) |
 | `driver.veh059@example.com`, `driver.veh060@example.com` | Driver | VEH059, VEH060 (ambient vans) |
 | `store.out077@example.com`, `store.out078@example.com` | Store manager | Fresh Kandy OUT077, OUT078 |
-| `admin@example.com` | Admin | Every role's app (open `/loader`, `/driver`, `/store-manager` directly) |
+
+The database also holds an `admin@example.com` account (demo reset places the seed orders as it); it is
+not listed on the sign-in page because it has no depot, vehicle or outlet of its own.
 
 The deployed app uses Clerk for sign-in instead (`AUTH_MODE=clerk`); see [Deploy](#deploy).
 
