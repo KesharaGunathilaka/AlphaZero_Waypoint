@@ -136,8 +136,8 @@ Frontend: `cd frontend && pnpm lint && npx tsc --noEmit`.
 |---|---|---|
 | Database | Neon (PostgreSQL 18) | `./db/load.sh "$NEON_DATABASE_URL"` once; `--migrate` after schema changes |
 | Photos | Neon object storage (S3 API) | in the API's variables |
-| API | Vercel, Root Directory `backend` | [`backend/.env.production.example`](backend/.env.production.example) |
-| Web | Vercel, Root Directory `frontend` | [`frontend/.env.production.example`](frontend/.env.production.example) |
+| API | Vercel, Root Directory `backend` | *Deployed* section of [`backend/.env.example`](backend/.env.example) |
+| Web | Vercel, Root Directory `frontend` | *Deployed* section of [`frontend/.env.example`](frontend/.env.example) |
 | Sign-in | Clerk organization, roles `dispatcher` · `loader` · `driver` · `store_manager` | users with the demo e-mails above |
 
 Step by step, with the checks after each deployment: [docs/deploy.md](docs/deploy.md).

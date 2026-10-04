@@ -25,9 +25,8 @@ Wipe and reload: `docker compose down -v`, then `docker compose up --build`.
 Needs `psql` 16+. Use the **direct** connection string for loading (Neon → Connect → pooling **off**).
 
 ```bash
-# .env.neon (git-ignored), single quotes because the URL contains '&':
-#   NEON_DATABASE_URL='postgresql://USER:PASSWORD@ep-xxxx.REGION.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
-set -a; . ./.env.neon; set +a
+# The direct connection string, in single quotes because it contains '&' (never commit it):
+export NEON_DATABASE_URL='postgresql://USER:PASSWORD@ep-xxxx.REGION.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
 
 ./db/load.sh "$NEON_DATABASE_URL"            # empty database: schema + CSVs + migrations + demo day
 ./db/load.sh "$NEON_DATABASE_URL" --migrate  # existing database: apply db/migrations/*.sql (safe to re-run)

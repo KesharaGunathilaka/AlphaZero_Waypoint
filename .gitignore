@@ -8,7 +8,6 @@
 .env
 .env.*
 !.env.example
-!.env.production.example
 *.pem
 *.key
 

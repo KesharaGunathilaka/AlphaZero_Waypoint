@@ -11,5 +11,5 @@ pnpm lint && npx tsc --noEmit
 ```
 
 Sign-in is chosen at build time by `NEXT_PUBLIC_AUTH_MODE`: `local` (Docker delivery, demo accounts) or
-`clerk` (deployed). Deployed settings: [`.env.production.example`](.env.production.example) and the
+`clerk` (deployed). Deployed settings: the *Deployed* section of [`.env.example`](.env.example) and the
 [deploy guide](../docs/deploy.md).

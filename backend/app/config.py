@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     AUTH_DEV_BYPASS: bool = False
 
     # Photos and signatures. "db" keeps them in Postgres (Docker delivery: no cloud account needed);
-    # "s3" uses an S3-compatible bucket (deployed: Neon object storage, credentials in .env.aws).
+    # "s3" uses an S3-compatible bucket (deployed: Neon object storage).
     STORAGE_BACKEND: Literal["db", "s3"] = "db"
     S3_BUCKET: str = "images"
     AWS_ENDPOINT_URL_S3: str = ""

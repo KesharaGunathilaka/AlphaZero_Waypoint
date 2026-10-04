@@ -16,5 +16,4 @@ uv run fastapi dev app/main.py    # http://localhost:8000/docs
 | `app/main.py` | the app (`main.py` re-exports it for hosts that look for `main:app`) |
 | `app/modules/` | `auth` (local sign-in), `dispatch`, `field` (loader, driver, sync, photos), `store` |
 | `tests/` | `rules_audit.py`, `day_scenario.py`, `walkthrough.py`: run against a local database only (they reset it) |
-| `.env.example` | running on your PC |
-| `.env.production.example` | the Vercel project's variables ([deploy guide](../docs/deploy.md)) |
+| `.env.example` | every setting: *Local* (your PC) and *Deployed* (the Vercel project, [deploy guide](../docs/deploy.md)) |

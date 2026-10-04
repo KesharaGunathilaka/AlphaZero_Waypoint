@@ -9,18 +9,34 @@ Two ways to run Waypoint, from the same `main` branch:
 | Sign-in | Local: demo accounts, password `waypoint-demo` | Clerk |
 | Photos | Stored in the database | Neon object storage (S3 API) |
 | Demo controls (*Reset demo*, *Simulate no signal*) | Shown | Hidden; the API refuses the reset |
-| Settings | `.env.example` (optional) | `backend/.env.production.example`, `frontend/.env.production.example` |
+| Settings | `.env.example` (optional) | Vercel environment variables (listed in `backend/.env.example`, `frontend/.env.example`) |
 
-## Where every setting lives
+## Env files: three in git, real values in Vercel
 
-| File | Used by | Committed |
+| File (in git) | What it lists | Used by |
 |---|---|---|
-| `.env.example` | Docker Compose. Optional: the defaults inside `docker-compose.yml` are the same values | yes |
-| `backend/.env.example` | The API on your PC without Docker (`uv run fastapi dev app/main.py`) | yes |
-| `frontend/.env.example` | The web app on your PC without Docker (`pnpm dev`), as `frontend/.env.local` | yes |
-| `backend/.env.production.example` | Template for the Vercel **API** project's environment variables | yes |
-| `frontend/.env.production.example` | Template for the Vercel **web** project's environment variables | yes |
-| `.env`, `.env.neon`, `.env.aws`, `backend/.env`, `frontend/.env`, `frontend/.env.local` | Your real values | **never** (git-ignored) |
+| `.env.example` (root) | Docker Compose ports, database user, local sign-in | `docker compose up`. Optional: the same values are the defaults |
+| `backend/.env.example` | Every API setting: a *Local* section and a *Deployed* section | Local: copy to `backend/.env`. Deployed: the variables of the Vercel API project |
+| `frontend/.env.example` | Every web setting: a *Local* section and a *Deployed* section | Local: copy to `frontend/.env.local`. Deployed: the variables of the Vercel web project |
+
+Only these three are committed; they hold no secrets. Every file with real values (`.env`,
+`backend/.env`, `frontend/.env.local`, …) is git-ignored and stays on your PC.
+
+**Sharing with the team.** The real deployed values live in one place: the **Environment Variables of
+the two Vercel projects**. Invite teammates to the Vercel team instead of sending files; anyone with
+access can read them there or pull them with `vercel env pull`. For a backup or a handover, keep them
+in a password manager (Bitwarden, 1Password), never in git, chat or e-mail. What each place needs:
+
+| Secret | Vercel API project | Vercel web project | Comes from |
+|---|---|---|---|
+| `DATABASE_URL` (pooled) | ✓ | | Neon → Connect |
+| `CLERK_SECRET_KEY` | ✓ | ✓ | Clerk → API keys |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | | ✓ | Clerk → API keys |
+| `CLERK_JWKS_URL`, `CLERK_ISSUER` | ✓ | | Clerk → API keys (Frontend API URL) |
+| `AWS_ENDPOINT_URL_S3`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | ✓ | | Neon → object storage |
+| Neon **direct** connection string | | | only for `db/load.sh` (migrations, demo reset) |
+
+Docker needs no secrets at all: judges and teammates run `docker compose up` with nothing to share.
 
 ## 1. Docker delivery (what judges run)
 
@@ -69,7 +85,7 @@ Use the **direct** connection string for `load.sh` and the **pooled** one (`-poo
 the API. The deployed dispatcher has no *Reset demo* button, so `--demo` is how to reset Neon before a
 presentation. Never run `backend/tests/*` against Neon: they wipe the data.
 
-Photos: Neon object storage, bucket `images`; the values are in `.env.aws`.
+Photos: Neon object storage, bucket `images`; its endpoint and keys go in the API project's variables.
 
 ### 2.3 Clerk
 
@@ -101,7 +117,7 @@ Photos: Neon object storage, bucket `images`; the values are in `.env.aws`.
 | Root Directory | `backend` |
 | Framework Preset | FastAPI (detected; entrypoint `main.py` → `app.main:app`) |
 | Production Branch (Settings → Git) | `main` |
-| Environment Variables | `backend/.env.production.example`, filled in |
+| Environment Variables | the *Deployed* section of `backend/.env.example`, with real values |
 
 Values that must match the other project: `CORS_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` = the web
 app's address; `ALLOWED_HOSTS` and `PUBLIC_API_URL` = the API's own domain. Preview deployments have
@@ -117,7 +133,7 @@ The API refuses to start in production if `CLERK_AUTHORIZED_PARTIES`, `CORS_ORIG
 | Root Directory | `frontend` |
 | Framework Preset | Next.js (pnpm, from `pnpm-lock.yaml`) |
 | Production Branch (Settings → Git) | `main` |
-| Environment Variables | `frontend/.env.production.example`, filled in |
+| Environment Variables | the *Deployed* section of `frontend/.env.example`, with real values |
 
 `NEXT_PUBLIC_*` values are built into the pages: after changing one, **redeploy**.
 
