@@ -90,3 +90,7 @@ desktop.ini
 !.vscode/settings.json
 # Claude Code local tool settings (launch configs, permissions)
 .claude/
+
+
+models/
+submissions/
