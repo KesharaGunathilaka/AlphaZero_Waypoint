@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { Logo } from "@/components/waypoint/logo";
-import { formatDay } from "@/lib/format";
+import { useNow } from "@/lib/clock";
+import { formatDay, fromNow } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { isFullyLoaded, vehicleStatus, type LoadProgress, type LoadingVehicle } from "./data";
+import { ChilledBadge } from "./load-list";
 import { CARD, LiveStatus, TabletPill, TabletScreen, type Outbox } from "./tablet-ui";
 
 const FILTERS = {
@@ -37,6 +39,7 @@ export function VehiclesToLoad({
   onOpenVehicle: (id: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const now = useNow(15_000);
   const runs = vehicles.map((vehicle) => ({ vehicle, progress: progress[vehicle.id] }));
   const changed = vehicles.filter((v) => v.planChanged);
   const shown = runs.filter(({ progress }) => FILTERS[filter].match(progress));
@@ -91,6 +94,9 @@ export function VehiclesToLoad({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {shown.map(({ vehicle: v, progress }) => {
             const status = vehicleStatus(v, progress);
+            const minutes = (Date.parse(v.departAt) - now.getTime()) / 60_000;
+            // No countdown for a released van, or one leaving more than 3 h from now.
+            const urgency = v.released || minutes > 180 ? "none" : minutes < 0 ? "late" : minutes <= 30 ? "soon" : "later";
             return (
               <button
                 key={v.id}
@@ -108,10 +114,17 @@ export function VehiclesToLoad({
                     <div className="mt-1 text-wp-text-2">
                       {v.type} · {v.stops} stops
                     </div>
+                    {v.chilled && <ChilledBadge className="mt-2" />}
                   </div>
                   <div className="text-right">
                     <div className="text-[13px] text-wp-muted">Departs</div>
                     <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.departs}</div>
+                    {urgency !== "none" && (
+                      <div className={cn("mt-1 text-[15px] font-semibold",
+                                         urgency === "late" ? "text-wp-crit" : urgency === "soon" ? "text-wp-warn" : "text-wp-text-2")}>
+                        {urgency === "late" ? `Due out ${fromNow(v.departAt, now)}` : `Leaves ${fromNow(v.departAt, now)}`}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="h-2 w-full rounded bg-wp-surface-2">

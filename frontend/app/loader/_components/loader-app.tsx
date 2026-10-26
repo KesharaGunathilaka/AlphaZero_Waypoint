@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DemoClockBar } from "@/components/waypoint/demo-clock";
 import { useApiData } from "@/lib/api/use-api";
 import { isFullyLoaded, type LoadingVehicle } from "./data";
 import { DepartureCheck } from "./departure-check";
@@ -34,6 +35,7 @@ export function LoaderApp() {
 
   return (
     <div data-theme="dark" className="flex min-h-screen flex-col items-center bg-[#05080d] text-base text-wp-text tabular-nums xl:p-4">
+      <DemoClockBar className="w-full xl:mb-2 xl:rounded-md" />
       {screen === "vehicles" || !vehicle ? (
         <VehiclesToLoad
           vehicles={dock.vehicles}

@@ -59,7 +59,10 @@ async def loader_routes(user: Loader, db: DbSession):
     """Trips of released plans still to load or leave, earliest departure first, and plan changes
     the dock has not acknowledged yet (opening the vehicle acknowledges them with a plan_ack event)."""
     routes = await rows(db, """
-        SELECT rb.*, v.source_id AS vehicle_source_id, pv.released_at AS plan_released_at
+        SELECT rb.*, v.source_id AS vehicle_source_id, pv.released_at AS plan_released_at,
+               (SELECT count(*) FROM stop s JOIN stop_order so ON so.stop_id = s.stop_id AND so.removed_at IS NULL
+                  JOIN order_header h ON h.order_id = so.order_id
+                 WHERE s.route_id = rb.route_id AND s.removed_at IS NULL AND h.temp = 'chilled') AS chilled_orders
         FROM route_board rb JOIN vehicle v ON v.vehicle_id = rb.vehicle_id
         LEFT JOIN plan_version pv ON pv.plan_id = rb.plan_id AND pv.version = rb.plan_version
         WHERE rb.depot_id = :d AND rb.plan_version > 0 AND rb.state IN ('planned', 'loading', 'loaded')
