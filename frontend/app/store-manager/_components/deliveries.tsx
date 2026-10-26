@@ -5,7 +5,8 @@ import { Button } from "@/components/waypoint/controls";
 import { Eyebrow } from "@/components/waypoint/data";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { useApiData } from "@/lib/api/use-api";
-import { formatDay, formatDayTime, formatLongDay, formatTime, plural, timeLeft, todayIso } from "@/lib/format";
+import { appToday, useNow } from "@/lib/clock";
+import { formatDay, formatDayTime, formatLongDay, formatTime, fromNow, plural, timeLeft } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   arrivalWindow,
@@ -14,6 +15,7 @@ import {
   orderKind,
   orderPill,
   unloadNote,
+  type DeliveryProgress,
   type OrderSlot,
   type Outlet,
   type StoreOrder,
@@ -45,7 +47,8 @@ export function Deliveries({
   onConfirm: () => void;
 }) {
   const toReceive = orders.find((o) => o.needs_receipt);
-  const today = todayIso();
+  useNow();
+  const today = appToday();
 
   // The next day this store expects goods: an open order's date, or the day a moved order was due.
   const open = orders.filter((o) => !DONE.includes(o.status) && !o.needs_receipt);
@@ -140,19 +143,52 @@ function ScheduledCard({
           <div className="text-[15px] leading-[22px] font-semibold text-wp-text-2">After the 16:00 cutoff</div>
         )}
       </div>
+      {order.progress && <LiveProgress progress={order.progress} stopsBefore={order.stops_before_yours} />}
       <div className="text-[13px] leading-[18px] text-wp-text-2">
         {unloadNote(order.unload)}. {plural(order.lines?.length ?? 0, "line")}.{" "}
-        {order.status === "on_the_way" && order.stops_before_yours !== null
-          ? `${plural(order.stops_before_yours, "stop")} before yours.`
-          : window
-            ? "The plan is released."
-            : "Your arrival window appears when dispatch releases the plan."}
+        {order.progress ? "" : window ? "The plan is released." : "Your arrival window appears when dispatch releases the plan."}
       </div>
       <ChangeOrderAction order={order} onChangeOrder={onChangeOrder} className="mt-auto" />
       <div className="flex justify-between gap-2 text-xs text-wp-muted">
         <span>Order {order.confirmation_no}</span>
         <LinkButton onClick={() => onOpenOrder(order.order_id)}>Details</LinkButton>
       </div>
+    </div>
+  );
+}
+
+/** Where the van is now: loading, on the road (stops before yours, how late), or at your door. */
+function LiveProgress({ progress: p, stopsBefore }: { progress: DeliveryProgress; stopsBefore: number | null }) {
+  const now = useNow(30_000);
+  const onRoad = p.route_state === "on_the_way" || Boolean(p.departed_at);
+  const late = p.behind_minutes >= 5;
+  const before = stopsBefore ?? p.stop_seq - 1;
+  const done = Math.max(0, p.stop_seq - 1 - before);
+  const who = `${p.vehicle}${p.driver_name ? ` · driver ${p.driver_name}` : ""}`;
+
+  let headline: string;
+  if (p.arrived_at) headline = `Arrived at ${formatTime(p.arrived_at)}`;
+  else if (onRoad) headline = before === 0 ? `Next stop is yours · about ${formatTime(p.eta)}` : `On the way · ${plural(before, "stop")} before yours`;
+  else headline = p.route_state === "loaded" ? "Loaded, leaving the depot soon" : "Being loaded at the depot";
+
+  return (
+    <div role="status" className={cn("flex flex-col gap-2 rounded-md border px-3 py-2",
+                                     late && !p.arrived_at ? "border-wp-warn bg-wp-warn-tint" : "border-wp-info bg-wp-info-tint/60")}>
+      <div className="text-[14px] font-semibold">{headline}</div>
+      {!p.arrived_at && (
+        <div className="text-[12px] text-wp-text-2">
+          {onRoad
+            ? <>Expected about <b className="text-wp-text">{formatTime(p.eta)}</b> ({fromNow(p.eta, now)}){late ? ` · running ${p.behind_minutes} min late` : " · on time"}</>
+            : <>Planned at your store {formatTime(p.planned_arrival)}</>}
+        </div>
+      )}
+      <div className="flex items-center gap-1" role="img" aria-label={`Stop ${p.stop_seq} of ${p.stops_total} is yours`}>
+        {Array.from({ length: p.stops_total }, (_, i) => (
+          <span key={i} className={cn("h-2 flex-1 rounded-full",
+                                      i + 1 === p.stop_seq ? (p.arrived_at ? "bg-wp-good" : "bg-wp-info") : i < done ? "bg-wp-text-2" : "bg-wp-surface-2")} />
+        ))}
+      </div>
+      <div className="text-[11px] text-wp-text-2">Stop {p.stop_seq} of {p.stops_total} · {who}</div>
     </div>
   );
 }

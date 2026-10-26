@@ -54,6 +54,22 @@ export type StoreOrder = {
   receipt_at: string | null;
   stops_before_yours: number | null;
   lines: OrderLine[] | null;
+  /** Where the delivery is, once the plan is released (GET /store/orders). */
+  progress?: DeliveryProgress | null;
+};
+
+export type DeliveryProgress = {
+  stop_seq: number;
+  stops_total: number;
+  route_state: string;
+  departed_at: string | null;
+  planned_arrival: string;
+  arrived_at: string | null;
+  /** The planned arrival pushed back by how late the van is so far. */
+  eta: string;
+  behind_minutes: number;
+  driver_name: string | null;
+  vehicle: string;
 };
 
 export type ReceiptLine = {
