@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { appNow } from "@/lib/clock";
+import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { flagLabel, flagSummary, flaggedLines, isFullyLoaded, progressOf, type LoadStop, type LoadingVehicle } from "./data";
 import { CARD, LiveStatus, Meter, PRIMARY_TOUCH_BUTTON, TOUCH_BUTTON, TabletPill, TabletScreen, type Outbox } from "./tablet-ui";
@@ -39,9 +41,7 @@ export function DepartureCheck({
   const weightPercent = Math.round((progress.weightKg / vehicle.capacityKg) * 100);
   const volumePercent = Math.round((progress.volumeM3 / vehicle.capacityM3) * 100);
   const ready = isFullyLoaded(progress);
-  const [checkedAt] = useState(() =>
-    new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }),
-  );
+  const [checkedAt] = useState(() => formatTime(appNow()));
 
   return (
     <TabletScreen label="L3 Departure check">

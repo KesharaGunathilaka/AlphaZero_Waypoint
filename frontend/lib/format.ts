@@ -37,6 +37,15 @@ export function timeLeft(value: string | Date, now: Date = new Date()): string {
   return h > 0 ? `${h} h ${m} min left` : `${m} min left`;
 }
 
+/** "in 25 min", "in 1 h 05 min", "now", "12 min ago": from `now` to `value`. */
+export function fromNow(value: string | Date, now: Date): string {
+  const minutes = Math.round((new Date(value).getTime() - now.getTime()) / 60000);
+  if (minutes === 0) return "now";
+  const m = Math.abs(minutes);
+  const text = m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min` : `${m} min`;
+  return minutes > 0 ? `in ${text}` : `${text} ago`;
+}
+
 /** Today's date in Sri Lanka as YYYY-MM-DD. */
 export function todayIso(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());

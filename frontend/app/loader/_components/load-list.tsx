@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { appNow } from "@/lib/clock";
+import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   FLAG_TYPES,
@@ -31,7 +33,7 @@ function gaugeFill(percent: number) {
 
 /** The time a flag was sent. Only ever called from a click, so never on the server. */
 function clockTime() {
-  return new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return formatTime(appNow());
 }
 
 const STOP_TONE = {

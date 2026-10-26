@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { apiRequest } from "@/lib/api/client";
 import { useGetToken } from "@/lib/auth-client";
+import { appNow } from "@/lib/clock";
 
 export type OutboxEvent = {
   event_id: string;
@@ -239,7 +240,7 @@ export function useOutbox(label: string) {
   /** Record an action. Returns at once; the outbox sends it when it can. */
   const enqueue = useCallback(
     (event: Omit<OutboxEvent, "event_id" | "device_time"> & { event_id?: string }) => {
-      const full: OutboxEvent = { event_id: crypto.randomUUID(), device_time: new Date().toISOString(), ...event };
+      const full: OutboxEvent = { event_id: crypto.randomUUID(), device_time: appNow().toISOString(), ...event };
       set(label, { events: [...get(label).events, full] });
       void sync();
       return full;
@@ -253,7 +254,7 @@ export function useOutbox(label: string) {
       const attachment_id = crypto.randomUUID();
       await blobStore("readwrite", (s) => s.put(blob, attachment_id));
       set(label, {
-        photos: [...get(label).photos, { attachment_id, kind, link, device_time: new Date().toISOString(), tries: 0 }],
+        photos: [...get(label).photos, { attachment_id, kind, link, device_time: appNow().toISOString(), tries: 0 }],
       });
       void sync();
       return attachment_id;
