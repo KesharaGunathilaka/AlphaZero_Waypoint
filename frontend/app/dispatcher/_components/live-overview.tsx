@@ -7,6 +7,7 @@ import { StatusPill } from "@/components/waypoint/status";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND_NAME, type FleetRow, type Monitor, type RunProgress } from "./data";
+import { LaneTimeline, type Lane, type LaneBar } from "./lane-timeline";
 import { AttentionRow, MovedToday, TripStops, dots, vehicleStatus, type LiveActions } from "./live-monitor";
 
 /** Where a trip is, for the charts: one bucket each, worst first. */
@@ -199,16 +200,11 @@ function Kpi({ name, value, tone }: { name: string; value: number; tone: string 
 function Timeline({ m, showDepot, focus, selected, onOpen }: {
   m: Monitor; showDepot: boolean; focus: Bucket | null; selected: number | null; onOpen: (routeId: number) => void;
 }) {
-  const times = m.fleet.flatMap((f) => [Date.parse(f.depart_at), Date.parse(f.return_at ?? f.depart_at)]).filter(Number.isFinite);
-  if (times.length === 0) return <Panel title="Fleet today"><div className="text-wp-text-2">No trips yet.</div></Panel>;
-  const start = Math.min(...times) - HOUR / 4;
-  const end = Math.max(...times) + HOUR / 4;
-  const x = (t: number) => ((t - start) / (end - start)) * 100;
-  // Colombo is UTC+05:30 all year, so its whole hours fall on the half hour in UTC.
-  const ticks: number[] = [];
-  for (let t = Math.ceil((start - HOUR / 2) / HOUR) * HOUR + HOUR / 2; t <= end; t += HOUR) ticks.push(t);
+  if (m.fleet.length === 0) return <Panel title="Fleet today"><div className="text-wp-text-2">No trips yet.</div></Panel>;
   const now = Date.parse(m.server_time);
-  const showNow = now >= start && now <= end;
+  const first = Math.min(...m.fleet.map((f) => Date.parse(f.depart_at)));
+  const last = Math.max(...m.fleet.map((f) => Date.parse(f.return_at ?? f.depart_at)));
+  const showNow = now >= first - HOUR / 4 && now <= last + HOUR / 4;
   const groups = showDepot ? m.runs.map((r) => r.depot) : [null];
 
   return (
@@ -218,39 +214,15 @@ function Timeline({ m, showDepot, focus, selected, onOpen }: {
       <div className={cn("grid gap-x-5 gap-y-3 lg:h-full lg:min-h-0", groups.length > 1 && "xl:grid-cols-2")}>
         {groups.map((depot) => {
           const fleet = m.fleet.filter((f) => !depot || f.depot === depot);
-          const lanes = [...new Set(fleet.map((f) => f.vehicle_source_id))].sort();
+          const lanes: Lane[] = [...new Set(fleet.map((f) => f.vehicle_source_id))].sort().map((vehicle) => ({
+            key: vehicle,
+            label: vehicle,
+            bars: fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => tripBar(f, focus, selected, onOpen)),
+          }));
           return (
             <div key={depot ?? "one"} className="flex min-h-0 flex-col">
               {depot && <div className="mb-0.5 text-[12px] font-bold">{depot}</div>}
-              <div className="flex shrink-0 pl-[74px]">
-                <div className="relative h-4 flex-1 text-[10px] text-wp-muted">
-                  {ticks.map((t, i) => (
-                    <span key={t} className={cn("absolute -translate-x-1/2", i % 2 === 1 && "max-sm:hidden", i % 2 === 1 && groups.length > 1 && "xl:max-2xl:hidden")}
-                          style={{ left: `${x(t)}%` }}>{formatTime(new Date(t))}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                <div className="pointer-events-none absolute inset-y-0 right-0 left-[74px]">
-                  {ticks.map((t) => <div key={t} className="absolute inset-y-0 border-l border-wp-border/60" style={{ left: `${x(t)}%` }} />)}
-                  {showNow && (
-                    <div className="absolute inset-y-0 z-10 border-l-2 border-wp-crit" style={{ left: `${x(now)}%` }}>
-                      <span className="absolute -top-0.5 -translate-x-1/2 rounded bg-wp-crit px-1 text-[9px] font-bold text-white">NOW</span>
-                    </div>
-                  )}
-                </div>
-                {lanes.map((vehicle) => (
-                  <div key={vehicle} className="flex min-h-[18px] flex-1 items-center border-t border-wp-border/40 first:border-t-0 lg:max-h-[38px] lg:min-h-[14px]">
-                    <div className="w-[74px] shrink-0 truncate pr-2 text-[11px] font-semibold">{vehicle}</div>
-                    <div className="relative h-full flex-1">
-                      {fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => (
-                        <TripBar key={f.route_id} f={f} left={x(Date.parse(f.depart_at))} right={x(Date.parse(f.return_at ?? f.depart_at))}
-                                 dim={focus !== null && bucket(f) !== focus} selected={selected === f.route_id} onOpen={onOpen} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <LaneTimeline lanes={lanes} now={now} />
             </div>
           );
         })}
@@ -259,26 +231,23 @@ function Timeline({ m, showDepot, focus, selected, onOpen }: {
   );
 }
 
-function TripBar({ f, left, right, dim, selected, onOpen }: {
-  f: FleetRow; left: number; right: number; dim: boolean; selected: boolean; onOpen: (routeId: number) => void;
-}) {
+function tripBar(f: FleetRow, focus: Bucket | null, selected: number | null, onOpen: (routeId: number) => void): LaneBar {
   const b = bucket(f);
-  const style = BUCKETS.find((s) => s.key === b)!;
   const status = vehicleStatus(f);
-  const done = f.stops_total ? f.stops_done / f.stops_total : 0;
-  return (
-    <button type="button" onClick={() => onOpen(f.route_id)}
-            title={`${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}`}
-            aria-label={`${f.vehicle_source_id} trip ${f.route_seq}, ${f.district}, ${f.stops_done} of ${f.stops_total} stops, ${status.label}`}
-            className={cn("absolute top-[10%] bottom-[10%] flex cursor-pointer items-center overflow-hidden rounded border text-left transition-opacity",
-                          style.bar, dim && "opacity-25", selected && "ring-2 ring-wp-focus ring-offset-1")}
-            style={{ left: `${left}%`, width: `${Math.max(0.8, right - left)}%` }}>
-      <div className={cn("absolute inset-y-0 left-0", FILL[b])} style={{ width: `${done * 100}%` }} />
-      <span className="relative block truncate px-1 text-[10px] leading-none font-semibold">
-        {f.district} {f.stops_done}/{f.stops_total}
-      </span>
-    </button>
-  );
+  return {
+    id: f.route_id,
+    start: Date.parse(f.depart_at),
+    end: Date.parse(f.return_at ?? f.depart_at),
+    text: `${f.district} ${f.stops_done}/${f.stops_total}`,
+    title: `${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}`,
+    ariaLabel: `${f.vehicle_source_id} trip ${f.route_seq}, ${f.district}, ${f.stops_done} of ${f.stops_total} stops, ${status.label}`,
+    className: BUCKETS.find((s) => s.key === b)!.bar,
+    fillClassName: FILL[b],
+    fill: f.stops_total ? f.stops_done / f.stops_total : 0,
+    dim: focus !== null && b !== focus,
+    selected: selected === f.route_id,
+    onClick: () => onOpen(f.route_id),
+  };
 }
 
 // ------------------------------------------------------------- bottom charts ----

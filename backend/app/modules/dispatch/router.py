@@ -108,7 +108,9 @@ async def runs(user: Dispatcher, db: DbSession):
         "next_open_date": await scalar(db, "SELECT next_open_service_date(CAST(:d AS smallint))", {"d": depot}),
         "runs": await rows(db, """
             SELECT r.run_id, r.service_date, r.state, r.cutoff_at, p.plan_id, p.state AS plan_state, p.version,
-                   (SELECT count(*) FROM order_header h WHERE h.run_id = r.run_id) AS orders
+                   (SELECT count(*) FROM order_header h WHERE h.run_id = r.run_id) AS orders,
+                   p.created_at AS closed_at,
+                   COALESCE((SELECT u.role = 'admin' FROM app_user u WHERE u.user_id = p.created_by), false) AS closed_automatically
             FROM run r LEFT JOIN plan p ON p.run_id = r.run_id
             WHERE r.depot_id = :d ORDER BY r.service_date DESC LIMIT 14""", {"d": depot}),
     }
@@ -158,6 +160,18 @@ async def capacity(user: Dispatcher, db: DbSession):
             SELECT v.source_id AS vehicle, c.name AS class, c.is_van, c.carries_chilled, v.active,
                    v.max_volume_m3::float AS m3, v.max_weight_kg::float AS kg
             FROM vehicle v JOIN vehicle_class c USING (class_id) WHERE v.depot_id = :d ORDER BY v.source_id""", {"d": depot}),
+        # How the last released plans used the fleet: real trips split by brand and district, so this turns a
+        # forecast volume into the vehicles it would take far better than "every vehicle once" does.
+        "recent": await one(db, """
+            WITH day AS (
+                SELECT p.service_date, count(DISTINCT r.vehicle_id) AS vehicles, count(DISTINCT r.route_id) AS trips,
+                       (SELECT sum(h.volume_m3) FROM stop_order so JOIN order_header h ON h.order_id = so.order_id
+                         WHERE so.plan_id = p.plan_id AND so.removed_at IS NULL) AS m3
+                FROM plan p JOIN route r ON r.plan_id = p.plan_id
+                WHERE p.depot_id = :d AND p.state = 'released'
+                GROUP BY p.plan_id, p.service_date ORDER BY p.service_date DESC LIMIT 10)
+            SELECT count(*) AS days, min(service_date) AS since, round(avg(vehicles), 1)::float AS vehicles,
+                   round(avg(trips), 1)::float AS trips, round(avg(m3), 1)::float AS m3 FROM day""", {"d": depot}),
     }
 
 
@@ -395,7 +409,7 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
             WHERE s.removed_at IS NULL AND s.route_id IN ({route_scope})
             ORDER BY s.route_id, s.seq""", {"runs": run_ids}),
         "closeout": await closeout(db, run_ids),
-        "server_time": await scalar(db, "SELECT now()"),
+        "server_time": await scalar(db, "SELECT app_now()"),  # the demo clock, when it runs
     }
 
 

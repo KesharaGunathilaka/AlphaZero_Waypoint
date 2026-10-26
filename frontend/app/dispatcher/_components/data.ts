@@ -19,6 +19,10 @@ export type Run = {
   plan_state: "draft" | "released" | null;
   version: number | null;
   orders: number;
+  /** When orders closed (the plan opened); null while still open. */
+  closed_at: string | null;
+  /** Closed by the 16:00 cutoff on its own, not by the dispatcher's button. */
+  closed_automatically: boolean;
 };
 export type Runs = { next_open_date: string; runs: Run[] };
 
@@ -33,6 +37,9 @@ export type Stop = {
   service_minutes: number;
   unload: string;
   van_only: boolean;
+  /** The store's delivery window that day ("05:00:00"). */
+  window_opens: string | null;
+  window_closes: string | null;
   orders: StopOrder[] | null;
 };
 
@@ -120,6 +127,33 @@ export type PlanView = {
   vehicles: Vehicle[];
   reasons: Reason[];
   next_operating_day: string | null;
+};
+
+/** Before the plan: what is coming in for a delivery day against the fleet that can carry it. */
+export type Outlook = {
+  service_date: string;
+  cutoff_at: string;
+  demand: { brand: BrandCode; temp: "ambient" | "chilled"; orders: number; kg: number; m3: number; van_only: number; moved_in: number }[];
+  fleet: { is_van: boolean; carries_chilled: boolean; available: number; m3_per_trip: number | null; kg_per_trip: number | null; in_workshop: string[] }[];
+  fresh_budget_minutes: number;
+};
+
+/** Would a vehicle in the workshop, back in service, let a deferred order go? */
+export type WhatIf = {
+  order_id: number;
+  today: { orders_served: number; orders_total: number } | null;
+  options: { vehicle_id: number; vehicle: string; serves_order: boolean; orders_served: number; orders_total: number }[];
+};
+
+/** Plan future capacity: the demand forecast by week and brand, and the depot's fleet. */
+export type Capacity = {
+  forecast: {
+    iso_year: number; iso_week: number; week_start: string; brand: BrandCode; total_m3: number; chilled_m3: number;
+    source: string; loaded_at: string; operating_days: number; festival: string | null; payday: boolean | null;
+  }[];
+  fleet: { vehicle: string; class: string; is_van: boolean; carries_chilled: boolean; active: boolean; m3: number; kg: number }[];
+  /** Average of the last released plans: how many vehicles and trips a day's volume really took. */
+  recent: { days: number; since: string | null; vehicles: number | null; trips: number | null; m3: number | null };
 };
 
 // ---------------------------------------------------------------- monitor ----

@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/waypoint/controls";
-import { formatDayTime, timeLeft } from "@/lib/format";
+import { useNow } from "@/lib/clock";
+import { formatDayTime, formatTime, timeLeft } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { PlanView, Run } from "./data";
 import type { PlanActions, Tab } from "./dispatcher-app";
@@ -33,6 +34,7 @@ export function DayProgress({
   actions: PlanActions;
   onTab: (tab: Tab) => void;
 }) {
+  const now = useNow();
   const closed = Boolean(run?.plan_id);
   const built = Boolean(plan && plan.routes.length > 0);
   const released = plan?.plan.state === "released";
@@ -47,7 +49,7 @@ export function DayProgress({
       key: "orders",
       title: "Close orders",
       detail: closed
-        ? `${plan?.summary?.orders_confirmed ?? run?.orders ?? 0} orders confirmed`
+        ? `${run?.closed_automatically && run.closed_at ? `Closed automatically at ${formatTime(run.closed_at)} · ` : ""}${plan?.summary?.orders_confirmed ?? run?.orders ?? 0} orders confirmed`
         : run
           ? `${run.orders} placed · stores can order until ${formatDayTime(run.cutoff_at)}`
           : "No orders yet",
@@ -95,7 +97,7 @@ export function DayProgress({
   let main: { label: string; onClick: () => void; disabled?: boolean; hint?: string } | null = null;
   if (!closed) {
     main = { label: "Close orders now", onClick: () => void actions.closeOrders(), disabled: !run,
-             hint: run ? `Normally automatic at the cutoff (${timeLeft(run.cutoff_at)})` : undefined };
+             hint: run ? `Closes on its own at ${formatTime(run.cutoff_at)} (${timeLeft(run.cutoff_at, now)})` : undefined };
   } else if (!built) {
     main = { label: "Build the plan", onClick: () => void actions.propose(), hint: "Takes a few seconds; checks every operating rule" };
   } else if (!released || dirty) {

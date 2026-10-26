@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { AccountButton } from "@/components/waypoint/account-button";
 import { Button, Select } from "@/components/waypoint/controls";
+import { DemoClockBar, DemoClockControls } from "@/components/waypoint/demo-clock";
 import { Logo } from "@/components/waypoint/logo";
 import { Banner } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
-import { formatDay, todayIso } from "@/lib/format";
+import { appToday, useClockOffset } from "@/lib/clock";
+import { formatDay } from "@/lib/format";
 import { AUTH_MODE } from "@/lib/auth-mode";
 import { cn } from "@/lib/utils";
+import { Capacity } from "./capacity";
 import type { Depots, Me, PlanView, Runs, Violation } from "./data";
 import { Deferrals } from "./deferrals";
 import { Ledger } from "./ledger";
@@ -17,13 +20,15 @@ import { Orders } from "./orders";
 import { LiveMonitor } from "./live-monitor";
 import { PlanBoard } from "./plan-board";
 
-/** Plain names, in the order of the dispatcher's day: plan it, check any order, settle what can't go, watch it run, look back. */
+/** Plain names, in the order of the dispatcher's day: plan it, check any order, settle what can't go, watch it run, look back,
+ *  then look ahead (future capacity). */
 const TABS = [
   ["plan", "Plan"],
   ["orders", "Orders"],
   ["deferrals", "Deferred"],
   ["live", "Live"],
   ["ledger", "Records"],
+  ["capacity", "Capacity"],
 ] as const;
 export type Tab = (typeof TABS)[number][0];
 
@@ -54,7 +59,9 @@ export function DispatcherApp() {
   const [moveRequest, setMoveRequest] = useState<number | null>(null);
 
   // Default run: the latest planned run from today on, otherwise the next date still taking orders.
-  const today = todayIso();
+  // "Today" follows the demo clock, so jumping to the delivery morning shows that morning's plan.
+  useClockOffset();
+  const today = appToday();
   const runList = runs.data?.runs ?? [];
   const defaultDate =
     runList.filter((r) => r.plan_id !== null && r.service_date >= today).map((r) => r.service_date).sort()[0] ??
@@ -155,6 +162,7 @@ export function DispatcherApp() {
     <OrderPanelProvider>
     <div className="min-h-screen bg-wp-canvas text-[13px] leading-[18px] text-wp-text tabular-nums">
       <header className="sticky top-0 z-30 border-b border-wp-border bg-wp-surface">
+        <DemoClockBar />
         <div className={cn("mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6", width)}>
           <Logo />
           {depots.data && depots.data.depots.length > 1 ? (
@@ -177,6 +185,11 @@ export function DispatcherApp() {
                   </option>
                 ))}
               </Select>
+            )}
+            {AUTH_MODE === "local" && (
+              <span className="hidden md:inline-flex">
+                <DemoClockControls morningOf={defaultDate} onChanged={(message) => setNotice({ ok: true, message })} />
+              </span>
             )}
             {AUTH_MODE === "local" && (
               <Button variant="secondary" className="hidden h-9 md:inline-flex" onClick={resetDemo} disabled={busy} title="Demo only: wipe and seed a fresh day">
@@ -239,6 +252,7 @@ export function DispatcherApp() {
       )}
       {tab === "live" && <LiveMonitor key={depotKey} />}
       {tab === "ledger" && <Ledger key={depotKey} />}
+      {tab === "capacity" && <Capacity key={depotKey} />}
     </div>
     </OrderPanelProvider>
   );
