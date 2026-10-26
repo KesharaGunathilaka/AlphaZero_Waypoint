@@ -44,10 +44,27 @@ END $$;
 -- available refrigerated van (VEH058 in the workshop) = 2,080 kg, so one order must wait.
 -- OUT077's dry order is left for the judge to place as the store manager.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql AS $$
+-- Who may wipe the data: an owner session (psql, db/load.sh, the Docker init script) with no signed-in
+-- user, or a signed-in dispatcher or admin. The API's restricted role with no user is refused.
+CREATE OR REPLACE FUNCTION demo_reset_allowed() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = wp, pg_temp AS $$
+  SELECT CASE
+           WHEN wp.me() IS NOT NULL THEN COALESCE((SELECT role IN ('dispatcher', 'admin') FROM wp.app_user
+                                                   WHERE user_id = wp.me() AND active), false)
+           ELSE NOT pg_has_role(session_user, 'waypoint_app', 'MEMBER')
+                OR (SELECT rolsuper FROM pg_roles WHERE rolname = session_user)
+         END
+$$;
+REVOKE ALL ON FUNCTION demo_reset_allowed() FROM PUBLIC;
+
+-- Runs as the owner (TRUNCATE needs it); demo_reset_allowed() decides who may call it.
+CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = wp, public, pg_temp AS $$
 DECLARE d date; pd date; dispatcher integer; admin integer; o record; n integer := 0; np integer := 0;
         kg numeric; m3 numeric; lines jsonb; base numeric;
 BEGIN
+  IF NOT wp.demo_reset_allowed() THEN
+    RAISE EXCEPTION 'WP010: only a dispatcher may reset the demo data' USING ERRCODE = 'WP010';
+  END IF;
   -- Wipe operational data first. TRUNCATE does not fire the append-only row triggers.
   TRUNCATE wp.attachment_blob, wp.attachment, wp.receipt_issue, wp.store_receipt, wp.delivery_line, wp.delivery,
            wp.stop_arrival, wp.load_confirmation, wp.route_release, wp.instruction, wp.flag, wp.plan_change_ack,

@@ -100,6 +100,8 @@ class Settings(BaseSettings):
                 raise ValueError("DEBUG must be False in production")
             if self.AUTH_MODE == "clerk" and not self.CLERK_AUTHORIZED_PARTIES:
                 raise ValueError("CLERK_AUTHORIZED_PARTIES must be set in production")
+            if self.AUTH_MODE == "clerk" and not self.CLERK_JWKS_URL:
+                raise ValueError("CLERK_JWKS_URL must be set in production")
             if not self.CORS_ORIGINS or "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must be explicit in production")
             if not self.ALLOWED_HOSTS or "*" in self.ALLOWED_HOSTS:

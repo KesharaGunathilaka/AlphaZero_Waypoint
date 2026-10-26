@@ -11,7 +11,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.v1.router import router
 from app.config import Settings, get_settings
-from app.db.session import db_is_healthy, engine
+from app.db.session import connected_role, db_is_healthy, engine
 from app.security.body_size_limit import BodySizeLimitMiddleware
 from app.security.rate_limit import limiter
 from app.security.security_headers import SecurityHeadersMiddleware
@@ -19,6 +19,14 @@ from app.security.security_headers import SecurityHeadersMiddleware
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    try:
+        role = await connected_role()
+        if role.get("superuser") or role.get("owner"):
+            logging.getLogger(__name__).warning(
+                "Connected to the database as %s, which bypasses row-level security and the append-only rules. "
+                "Connect as the restricted role waypoint_api (db/load.sh --api-role).", role.get("role"))
+    except Exception:  # the database may not be up yet; /health reports that
+        logging.getLogger(__name__).exception("Could not check the database role")
     yield
     await engine.dispose()
 
@@ -27,6 +35,10 @@ def _security_headers(settings: Settings) -> dict[str, str]:
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "strict-origin-when-cross-origin",
+        # Orders, deliveries, names and tokens: never kept by a browser or proxy cache. (Responses that set
+        # their own Cache-Control, like the short-lived image links, keep theirs.)
+        "Cache-Control": "no-store",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
     }
     if settings.ENVIRONMENT == "production":
         headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

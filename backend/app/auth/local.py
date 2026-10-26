@@ -27,6 +27,6 @@ def issue_token(user_id: int, role: str, name: str) -> tuple[str, datetime]:
 def read_token(token: str) -> dict:
     try:
         return jwt.decode(token, settings.LOCAL_AUTH_SECRET.get_secret_value(), algorithms=["HS256"],
-                          issuer=ISSUER, audience=AUDIENCE)
+                          issuer=ISSUER, audience=AUDIENCE, options={"require": ["exp", "iat", "sub"]})
     except jwt.PyJWTError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your sign-in has expired; sign in again") from exc

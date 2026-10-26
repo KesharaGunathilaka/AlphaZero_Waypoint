@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, DbSession, require_roles
 from app.modules.common import not_found, one, rows, scalar
@@ -23,8 +23,8 @@ class MoveIn(BaseModel):
 
 class DeferIn(BaseModel):
     order_id: int
-    reason_code: str
-    note: str | None = None
+    reason_code: str = Field(max_length=40)
+    note: str | None = Field(default=None, max_length=1000)
 
 
 class DepartIn(BaseModel):
@@ -41,7 +41,7 @@ class DepotIn(BaseModel):
 
 class ReplyIn(BaseModel):
     type: Literal["skip_stop", "reorder", "hold", "reassign", "proceed_short", "note"] = "note"
-    text: str | None = None
+    text: str | None = Field(default=None, max_length=1000)
     resolve: bool = True
 
 
@@ -185,9 +185,9 @@ async def move_order(plan_id: int, body: MoveIn, user: Dispatcher, db: DbSession
     order = await one(db, """
         SELECT h.order_id, ou.outlet_id, ou.brand_id, ou.district_id, b.code AS brand
         FROM order_header h JOIN outlet ou USING (outlet_id) JOIN brand b ON b.brand_id = ou.brand_id
-        WHERE h.order_id = :o""", {"o": body.order_id})
+        WHERE h.order_id = :o AND h.run_id = :run""", {"o": body.order_id, "run": plan["run_id"]})
     if order is None:
-        raise not_found("Order")
+        raise not_found("Order on this plan")
     vehicle = await one(db, "SELECT code, depot_id, active FROM vehicle WHERE vehicle_id = :v", {"v": body.vehicle_id})
     if vehicle is None:
         raise not_found("Vehicle")
@@ -245,8 +245,13 @@ async def defer(plan_id: int, body: DeferIn, user: Dispatcher, db: DbSession):
 
 @router.patch("/routes/{route_id}")
 async def set_departure(route_id: int, body: DepartIn, user: Dispatcher, db: DbSession):
-    await rows(db, "UPDATE route SET depart_at = CAST(:d AS timestamptz), return_at = CAST(:d AS timestamptz) + interval '1 minute' WHERE route_id = :r RETURNING 1",
-               {"d": body.depart_at, "r": route_id})
+    """Change when a trip leaves: only a trip of this dispatcher's depot that has not started loading."""
+    changed = await rows(db, """
+        UPDATE route SET depart_at = CAST(:d AS timestamptz), return_at = CAST(:d AS timestamptz) + interval '1 minute'
+        WHERE route_id = :r AND depot_id = :depot AND state = 'planned' RETURNING 1""",
+        {"d": body.depart_at, "r": route_id, "depot": _depot(user)})
+    if not changed:
+        raise not_found("Trip that can still be changed")
     minutes = await scalar(db, "SELECT retime_route(:r, :u)", {"r": route_id, "u": user.user_id})
     await db.commit()
     return {"trip_minutes": minutes}
@@ -382,7 +387,7 @@ async def closeout(db, run_ids: list[int]) -> list[dict]:
 
 
 class RequeueIn(BaseModel):
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
 
 
 @router.post("/orders/{order_id}/requeue")
