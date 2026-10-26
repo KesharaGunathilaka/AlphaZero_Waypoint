@@ -17,7 +17,7 @@ import { BRAND, BRAND_NAME, type BrandCode, type Outlook } from "./data";
  */
 export function OutlookPanel({ date }: { date: string }) {
   const outlook = useApiData<Outlook>(`/dispatch/runs/${date}/outlook`, 60_000);
-  const now = useNow();
+  useNow(); // re-render the cutoff countdown (cutoffs run on real time, not the demo clock)
   const o = outlook.data;
   if (!o) {
     return (
@@ -54,7 +54,7 @@ export function OutlookPanel({ date }: { date: string }) {
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="text-[15px] font-semibold">Orders so far against the fleet</h2>
         <span className="text-[12px] text-wp-text-2">
-          Closes automatically at {formatTime(o.cutoff_at)} ({timeLeft(o.cutoff_at, now)}) · {formatDayTime(o.cutoff_at)}
+          Closes automatically at {formatTime(o.cutoff_at)} ({timeLeft(o.cutoff_at)}) · {formatDayTime(o.cutoff_at)}
         </span>
       </div>
 

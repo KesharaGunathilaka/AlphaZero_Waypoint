@@ -34,7 +34,7 @@ export function DayProgress({
   actions: PlanActions;
   onTab: (tab: Tab) => void;
 }) {
-  const now = useNow();
+  useNow(); // re-render the cutoff countdown (cutoffs run on real time, not the demo clock)
   const closed = Boolean(run?.plan_id);
   const built = Boolean(plan && plan.routes.length > 0);
   const released = plan?.plan.state === "released";
@@ -97,7 +97,7 @@ export function DayProgress({
   let main: { label: string; onClick: () => void; disabled?: boolean; hint?: string } | null = null;
   if (!closed) {
     main = { label: "Close orders now", onClick: () => void actions.closeOrders(), disabled: !run,
-             hint: run ? `Closes on its own at ${formatTime(run.cutoff_at)} (${timeLeft(run.cutoff_at, now)})` : undefined };
+             hint: run ? `Closes on its own at ${formatTime(run.cutoff_at)} (${timeLeft(run.cutoff_at)})` : undefined };
   } else if (!built) {
     main = { label: "Build the plan", onClick: () => void actions.propose(), hint: "Takes a few seconds; checks every operating rule" };
   } else if (!released || dirty) {
