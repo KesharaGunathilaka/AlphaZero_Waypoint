@@ -134,6 +134,24 @@ BEGIN
     outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true, all_depots = EXCLUDED.all_depots,
     password_hash = COALESCE(wp.app_user.password_hash, EXCLUDED.password_hash);
 
+  -- Every vehicle has a driver (booklet: "Each vehicle has a driver"), so every trip shows who drives it.
+  -- Only the demo drivers above sign in; these have no password and are not listed on the sign-in page.
+  INSERT INTO wp.app_user(role, name, email, depot_id, vehicle_id)
+  SELECT 'driver',
+         (ARRAY['Asanka','Buddhika','Chaminda','Dhammika','Eranga','Gayan','Harsha','Indika','Janaka','Kapila',
+                'Lahiru','Mahesh','Nalin','Prasanna','Rohan','Sampath','Tharindu','Upul','Viraj','Waruna'])[1 + v.n % 20]
+         || ' ' ||
+         (ARRAY['Abeysekera','Bandara','Dias','Ekanayake','Gamage','Hettiarachchi','Jayasuriya','Karunaratne',
+                'Liyanage','Mendis','Nanayakkara','Pathirana','Ranasinghe','Senanayake','Tennakoon','Weerasinghe',
+                'Wickramasinghe'])[1 + (v.n * 7) % 17],
+         'driver.' || lower(v.source_id) || '@example.com', v.depot_id, v.vehicle_id
+  FROM (SELECT ve.*, substring(ve.source_id FROM 4)::integer AS n FROM wp.vehicle ve) v
+  WHERE NOT EXISTS (SELECT 1 FROM wp.app_user u WHERE u.vehicle_id = v.vehicle_id)
+  ON CONFLICT (email) DO NOTHING;
+
+  -- The demo clock starts on real time after every reset (007_finals.sql).
+  UPDATE wp.setting SET value = '0' WHERE key = 'demo_clock_offset_seconds';
+
   -- Day 5 assumption: VEH058 (refrigerated van, Kandy) is in the workshop; all others available.
   UPDATE wp.vehicle SET active = (source_id <> 'VEH058');
 
@@ -215,6 +233,11 @@ BEGIN
   FROM wp.outlet ou JOIN demo_catalogue c ON c.brand_id = ou.brand_id JOIN wp.product p ON p.sku = c.sku
   WHERE NOT EXISTS (SELECT 1 FROM wp.outlet_usual_line u WHERE u.outlet_id = ou.outlet_id AND u.temp = c.temp)
   ON CONFLICT DO NOTHING;
+
+  -- A week of finished days before today (007_finals.sql): history strips, Records, usual signers.
+  IF to_regproc('wp.seed_demo_history') IS NOT NULL THEN
+    PERFORM wp.seed_demo_history(5);
+  END IF;
 
   RETURN jsonb_build_object('service_date', d, 'orders', n,
                             'cutoff', wp.run_cutoff((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'), d),

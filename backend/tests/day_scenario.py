@@ -42,8 +42,10 @@ def now() -> str:
 
 
 def as_driver(vehicle: str) -> dict:
-    demo = {"VEH057", "VEH059", "VEH060"}
-    return {"X-Dev-User": f"driver.{vehicle.lower()}@{'example.com' if vehicle in demo else 'waypoint.test'}"}
+    """The driver of a vehicle: every vehicle has one (demo reset names them; test accounts fill any gap)."""
+    email = sql("""SELECT u.email FROM wp.app_user u JOIN wp.vehicle v ON v.vehicle_id = u.vehicle_id
+                   WHERE v.source_id = $1 AND u.active ORDER BY u.user_id LIMIT 1""", vehicle)[0]["email"]
+    return {"X-Dev-User": email}
 
 
 def event(type_: str, route_id: int, payload: dict | None = None, stop_id: int | None = None) -> dict:
