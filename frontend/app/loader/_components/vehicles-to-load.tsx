@@ -120,7 +120,7 @@ export function VehiclesToLoad({
                     <div className="text-[13px] text-wp-muted">Departs</div>
                     <div className="text-2xl leading-8 font-bold lg:text-3xl">{v.departs}</div>
                     {urgency !== "none" && (
-                      <div className={cn("mt-1 text-[15px] font-semibold",
+                      <div className={cn("mt-1 text-[15px] font-semibold whitespace-nowrap",
                                          urgency === "late" ? "text-wp-crit" : urgency === "soon" ? "text-wp-warn" : "text-wp-text-2")}>
                         {urgency === "late" ? `Due out ${fromNow(v.departAt, now)}` : `Leaves ${fromNow(v.departAt, now)}`}
                       </div>
