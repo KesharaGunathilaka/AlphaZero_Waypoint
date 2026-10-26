@@ -83,11 +83,15 @@ async def load_list(route_id: int, user: Loader, db: DbSession):
     if route is None:
         raise not_found("Route")
     route["lines"] = await rows(db, """
-        SELECT ll.*, s.planned_arrival, p.unit_weight_kg, p.unit_volume_m3, f.qty AS flag_qty, f.note AS flag_note,
+        SELECT ll.*, s.planned_arrival, w.opens AS window_opens, w.closes AS window_closes, p.unit_weight_kg,
+               p.unit_volume_m3, p.high_value, f.qty AS flag_qty, f.note AS flag_note,
                (SELECT count(*) FROM attachment a WHERE a.flag_id = ll.flag_id) AS flag_photos
         FROM load_list ll JOIN stop s ON s.stop_id = ll.stop_id JOIN product p ON p.sku = ll.sku
         LEFT JOIN flag f ON f.flag_id = ll.flag_id
-        WHERE ll.route_id = :r ORDER BY ll.load_order, ll.stop_id, ll.order_id, ll.line_no""", {"r": route_id})
+        LEFT JOIN LATERAL (SELECT min(x.opens) AS opens, max(x.closes) AS closes FROM outlet_window x
+                           WHERE x.outlet_id = s.outlet_id AND x.isodow = EXTRACT(isodow FROM CAST(:day AS date))::smallint) w ON true
+        WHERE ll.route_id = :r ORDER BY ll.load_order, ll.stop_id, ll.order_id, ll.line_no""",
+        {"r": route_id, "day": route["service_date"]})
     return route
 
 
@@ -130,8 +134,12 @@ async def driver_run(user: Driver, db: DbSession):
                (SELECT name FROM depot WHERE depot_id = u.depot_id) AS depot
         FROM app_user u LEFT JOIN vehicle v ON v.vehicle_id = u.vehicle_id LEFT JOIN vehicle_class c ON c.class_id = v.class_id
         WHERE u.user_id = :u""", {"u": user.user_id})
+    signers: dict[str, list[str]] = {}
+    for r in await rows(db, "SELECT outlet_code, name FROM usual_signers(:u)", {"u": user.user_id}):
+        if len(signers.setdefault(r["outlet_code"], [])) < 3:
+            signers[r["outlet_code"]].append(r["name"])
     return {"driver": me, "plans": [p for p in plans if p["routes"]], "deliveries": done, "route_states": routes,
-            "loaded": loaded, "windows": windows, "instructions": instructions,
+            "loaded": loaded, "windows": windows, "instructions": instructions, "signers": signers,
             "server_time": await scalar(db, "SELECT now()")}
 
 
@@ -287,6 +295,46 @@ async def raw(attachment_id: UUID, expires: int, signature: str, db: DbSession):
     })
 
 
+# ----------------------------------------------------------------- clock ----
+def demo_controls_allowed() -> bool:
+    """Demo controls (reset, demo clock) exist only for the Docker delivery and local test runs."""
+    s = get_settings()
+    return s.AUTH_MODE == "local" or (s.AUTH_DEV_BYPASS and s.ENVIRONMENT == "development")
+
+
+@router.get("/clock")
+async def clock(user: CurrentUserDep, db: DbSession):  # noqa: ARG001  (signed-in users only)
+    """The time the apps work to: real time, or the demo clock when the demo runs on the delivery morning."""
+    row = await one(db, "SELECT now() AS real_now, app_now() AS now, "
+                        "COALESCE(setting_int('demo_clock_offset_seconds'), 0) AS offset_seconds")
+    return {**row, "demo_controls": demo_controls_allowed()}
+
+
+class DemoClockIn(BaseModel):
+    at: datetime | None = None                                    # the clock shows this time now
+    advance_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+    real_time: bool = False
+
+
+@router.post("/demo/clock")
+async def demo_clock(body: DemoClockIn, user: Annotated[CurrentUser, Depends(require_roles("dispatcher"))], db: DbSession):
+    """Demo only: set the demo clock (jump to a time, move it on, or back to real time)."""
+    if not demo_controls_allowed():
+        raise not_found("Page")
+    current = int(await scalar(db, "SELECT COALESCE(setting_int('demo_clock_offset_seconds'), 0)"))
+    if body.real_time:
+        offset = 0
+    elif body.at is not None:
+        offset = int(await scalar(db, "SELECT round(extract(epoch FROM CAST(:at AS timestamptz) - now()))", {"at": body.at}))
+    elif body.advance_minutes:
+        offset = current + body.advance_minutes * 60
+    else:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Say when: at, advance_minutes or real_time")
+    await rows(db, "UPDATE setting SET value = :v WHERE key = 'demo_clock_offset_seconds' RETURNING 1", {"v": str(offset)})
+    await db.commit()
+    return await clock(user, db)
+
+
 # ------------------------------------------------------------------ demo ----
 @router.post("/demo/reset")
 async def demo_reset(user: Annotated[CurrentUser, Depends(require_roles("dispatcher"))], db: DbSession):
@@ -294,8 +342,7 @@ async def demo_reset(user: Annotated[CurrentUser, Depends(require_roles("dispatc
 
     Only for the Docker delivery (local sign-in) and local test runs: the deployed app (Clerk) never wipes its data.
     """
-    s = get_settings()
-    if s.AUTH_MODE != "local" and not (s.AUTH_DEV_BYPASS and s.ENVIRONMENT == "development"):
+    if not demo_controls_allowed():
         raise not_found("Page")
     result = await scalar(db, "SELECT demo_reset()")
     await db.commit()

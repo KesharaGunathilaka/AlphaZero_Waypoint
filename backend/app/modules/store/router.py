@@ -70,6 +70,20 @@ async def usual_order(user: StoreUser, db: DbSession, temp: Literal["ambient", "
         WHERE u.outlet_id = :o AND u.temp = CAST(:t AS temp_class)""", {"o": _outlet(user), "t": temp})
 
 
+@router.get("/last-order")
+async def last_order(user: StoreUser, db: DbSession, temp: Literal["ambient", "chilled"] = "ambient"):
+    """The quantities on this outlet's last delivered order of this kind (shown beside the usual)."""
+    last = await one(db, """
+        SELECT order_id, delivery_date FROM order_header
+        WHERE outlet_id = :o AND temp = CAST(:t AS temp_class) AND status IN ('delivered', 'delivered_in_part', 'received')
+        ORDER BY delivery_date DESC, order_id DESC LIMIT 1""", {"o": _outlet(user), "t": temp})
+    if last is None:
+        return {"delivery_date": None, "lines": []}
+    last["lines"] = await rows(db, "SELECT product_id, qty FROM order_line WHERE order_id = :id ORDER BY line_no",
+                               {"id": last["order_id"]})
+    return last
+
+
 @router.get("/order-slot")
 async def order_slot(user: StoreUser, db: DbSession, temp: Literal["ambient", "chilled"] = "ambient"):
     """Next delivery date this outlet can still order for, its cutoff, and any order already placed."""
@@ -105,12 +119,17 @@ async def change_order(order_id: int, body: ChangeOrderIn, user: StoreUser, db: 
 
 @router.get("/orders")
 async def my_orders(user: StoreUser, db: DbSession):
-    return await rows(db, """
+    orders = await rows(db, """
         SELECT so.*, (SELECT jsonb_agg(jsonb_build_object('line_no', l.line_no, 'product_id', l.product_id, 'product', p.name, 'unit', p.unit, 'qty', l.qty)
                                       ORDER BY l.line_no)
                       FROM order_line l JOIN product p USING (product_id) WHERE l.order_id = so.order_id) AS lines
         FROM store_orders so WHERE so.outlet_id = :o
         ORDER BY so.delivery_date DESC, so.order_id DESC""", {"o": _outlet(user)})
+    # Where each coming delivery is now: the stop number, the van leaving or arriving, an expected time.
+    for o in orders:
+        o["progress"] = (await one(db, "SELECT * FROM delivery_progress(:o)", {"o": o["order_id"]})
+                         if o["status"] in ("planned", "loading", "loaded", "on_the_way") else None)
+    return orders
 
 
 @router.get("/orders/{order_id}")

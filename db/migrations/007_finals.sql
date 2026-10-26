@@ -305,3 +305,58 @@ BEGIN
   RETURN n;
 END $$;
 REVOKE ALL ON FUNCTION seed_demo_history(integer) FROM PUBLIC;
+
+-- ----- who usually signs at a store (driver phone) ----------------------------------------------------
+-- The names that took deliveries at the stores on the calling driver's own trips, most frequent first.
+-- Row-level security would show only deliveries this driver made; staff names at a store they are about to
+-- visit are what they need, so this function reads them for those stores only.
+CREATE OR REPLACE FUNCTION usual_signers(p_user integer)
+RETURNS TABLE (outlet_code text, name text, times bigint) LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = wp, pg_temp AS $$
+  SELECT ou.code, d.received_by, count(*)
+  FROM wp.delivery d JOIN wp.order_header h ON h.order_id = d.order_id JOIN wp.outlet ou ON ou.outlet_id = h.outlet_id
+  WHERE (wp.me() IS NULL OR wp.me() = p_user)
+    AND d.received_by IS NOT NULL AND d.device_time > now() - interval '60 days'
+    AND h.outlet_id IN (SELECT s.outlet_id FROM wp.stop s JOIN wp.route r ON r.route_id = s.route_id
+                        WHERE r.driver_id = p_user AND s.removed_at IS NULL AND r.state <> 'cancelled')
+  GROUP BY ou.code, d.received_by
+  ORDER BY ou.code, count(*) DESC, d.received_by
+$$;
+REVOKE ALL ON FUNCTION usual_signers(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION usual_signers(integer) TO waypoint_app;
+
+-- ----- where my delivery is (store manager) -----------------------------------------------------------
+-- For one order the caller may see: its stop on the released trip, how many stops the trip has, whether the
+-- van has left or reached the store, and an expected arrival: the plan plus how far behind plan the van was
+-- at its latest stop before this one (or at departure). Stores cannot read trips themselves.
+CREATE OR REPLACE FUNCTION delivery_progress(p_order bigint)
+RETURNS TABLE (stop_seq integer, stops_total integer, route_state text, departed_at timestamptz,
+               planned_arrival timestamptz, arrived_at timestamptz, eta timestamptz, behind_minutes integer,
+               driver_name text, vehicle text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = wp, pg_temp AS $$
+  SELECT s.seq::integer,
+         (SELECT count(*) FROM wp.stop s2 WHERE s2.route_id = s.route_id AND s2.removed_at IS NULL)::integer,
+         r.state::text, r.departed_at, s.planned_arrival, a.device_time,
+         COALESCE(a.device_time, s.planned_arrival + make_interval(mins => GREATEST(0, COALESCE(lag.behind, 0))::integer)),
+         GREATEST(0, COALESCE(lag.behind, 0))::integer,
+         split_part(u.name, ' ', 1), v.source_id
+  FROM wp.stop_order so
+  JOIN wp.stop s ON s.stop_id = so.stop_id AND s.removed_at IS NULL
+  JOIN wp.route r ON r.route_id = s.route_id
+  JOIN wp.plan p ON p.plan_id = r.plan_id AND p.state = 'released'
+  JOIN wp.vehicle v ON v.vehicle_id = r.vehicle_id
+  LEFT JOIN wp.app_user u ON u.user_id = r.driver_id
+  LEFT JOIN wp.stop_arrival a ON a.stop_id = s.stop_id
+  LEFT JOIN LATERAL (
+    SELECT round(extract(epoch FROM x.actual - x.planned) / 60) AS behind FROM (
+      SELECT a2.device_time AS actual, s3.planned_arrival AS planned, s3.seq AS seq
+      FROM wp.stop s3 JOIN wp.stop_arrival a2 ON a2.stop_id = s3.stop_id
+      WHERE s3.route_id = s.route_id AND s3.seq < s.seq AND s3.removed_at IS NULL
+      UNION ALL
+      SELECT r.departed_at, r.depart_at, 0 WHERE r.departed_at IS NOT NULL) x
+    ORDER BY x.seq DESC LIMIT 1) lag ON true
+  WHERE so.order_id = p_order AND so.removed_at IS NULL AND wp.can_see_order(p_order)
+  LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION delivery_progress(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION delivery_progress(bigint) TO waypoint_app;

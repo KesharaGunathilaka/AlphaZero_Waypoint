@@ -252,17 +252,14 @@ class Planner:
         return trips, left
 
 
-async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
-    """Replace the plan's unreleased trips with the engine's proposal and draft deferrals for the rest."""
+async def load_inputs(db: AsyncSession, plan_id: int, with_vehicles: list[int] | None = None):
+    """Everything the engine needs for a plan: (plan, planner, order rows, vehicle rows). Vehicles are the depot's
+    active ones plus `with_vehicles` (a what-if: a vehicle back from the workshop). Fuel left excludes this plan's
+    own trips, so a draft being replaced does not count against itself."""
     plan = (await rows(db, "SELECT plan_id, run_id, depot_id, service_date, state FROM plan WHERE plan_id = :p",
                        {"p": plan_id}))[0]
-
-    # Start clean: drop this plan's draft trips and deferral drafts (orders return to the queue). The
-    # database does it after checking the role, the depot and that the plan is still a draft.
-    await scalar(db, "SELECT clear_plan_draft(:p, :u)", {"p": plan_id, "u": actor_id})
-
     isodow = plan["service_date"].isoweekday()
-    orders = [Order(**r) for r in await rows(db, """
+    orders = await rows(db, """
         SELECT h.order_id, ou.outlet_id, ou.code AS outlet_code, b.code AS brand, b.brand_id, ou.district_id,
                h.temp::text AS temp, h.weight_kg::float AS kg, h.volume_m3::float AS m3, ou.van_only,
                ou.unload::text AS unload, w.opens, w.closes, h.deferral_count
@@ -270,21 +267,23 @@ async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
         LEFT JOIN LATERAL (SELECT min(opens) AS opens, max(closes) AS closes FROM outlet_window
                            WHERE outlet_id = ou.outlet_id AND isodow = :dow) w ON true
         WHERE h.run_id = :run AND h.status IN ('confirmed', 'planned')""",
-        {"run": plan["run_id"], "dow": isodow})]
-    vehicles = [Vehicle(**r) for r in await rows(db, """
+        {"run": plan["run_id"], "dow": isodow})
+    vehicles = await rows(db, """
         SELECT v.vehicle_id, v.code, c.is_van, c.carries_chilled AS reefer, v.max_weight_kg::float AS max_kg,
                v.max_volume_m3::float AS max_m3, v.km_per_l::float AS km_per_l,
-               COALESCE(fuel_left(v.vehicle_id, :p), 1e9)::float AS fuel_left,
-               (SELECT user_id FROM app_user u WHERE u.vehicle_id = v.vehicle_id AND u.active) AS driver_id
+               COALESCE(fuel_quota_for(v.vehicle_id, week_start(CAST(:d AS date)))
+                        - fuel_used_week(v.vehicle_id, week_start(CAST(:d AS date)), :p), 1e9)::float AS fuel_left,
+               (SELECT user_id FROM app_user u WHERE u.vehicle_id = v.vehicle_id AND u.active ORDER BY user_id LIMIT 1) AS driver_id
         FROM vehicle v JOIN vehicle_class c USING (class_id)
-        WHERE v.depot_id = :depot AND v.active ORDER BY v.vehicle_id""",
-        {"p": plan_id, "depot": plan["depot_id"]})]
+        WHERE v.depot_id = :depot AND (v.active OR v.vehicle_id IN (SELECT value::integer FROM jsonb_array_elements_text(CAST(:extra AS jsonb))))
+        ORDER BY v.vehicle_id""",
+        {"p": plan_id, "d": plan["service_date"], "depot": plan["depot_id"], "extra": with_vehicles or []})
     # Operating days left in the plan's week (Monday to Sunday, from the calendar), today included.
     days_left = int(await scalar(db, """
         SELECT count(*) FROM generate_series(CAST(:d AS date), week_start(CAST(:d AS date)) + 6, interval '1 day') g
         WHERE is_working_day(g::date)""", {"d": plan["service_date"]}))
     for v in vehicles:
-        v.fuel_pace = v.fuel_left / max(days_left, 1)
+        v["fuel_pace"] = v["fuel_left"] / max(days_left, 1)
     districts = {r["district_id"]: District(r["o"], r["i"], float(r["ok"]), float(r["ik"])) for r in await rows(db, """
         SELECT district_id, depot_to_district_freeflow_min AS o, inter_stop_freeflow_min AS i,
                depot_to_district_km AS ok, inter_stop_km AS ik FROM district""")}
@@ -293,9 +292,49 @@ async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
     budgets = (int(await scalar(db, "SELECT setting_int('fresh_budget_minutes')")),
                int(await scalar(db, "SELECT setting_int('daytime_budget_minutes')")),
                time.fromisoformat(await scalar(db, "SELECT value FROM setting WHERE key = 'fresh_window_start'")))
+    return plan, Planner(plan["service_date"], districts, allowance, budgets), orders, vehicles
 
-    planner = Planner(plan["service_date"], districts, allowance, budgets)
-    trips, left = planner.plan(orders, vehicles)
+
+def run_planner(planner: Planner, order_rows: list[dict], vehicle_rows: list[dict]) -> tuple[list[Trip], list[Order]]:
+    """One engine run on fresh copies (the planner records trips on its Vehicle objects)."""
+    return planner.plan([Order(**r) for r in order_rows], [Vehicle(**r) for r in vehicle_rows])
+
+
+async def what_if(db: AsyncSession, plan_id: int, order_id: int) -> dict:
+    """Would a vehicle in the workshop, back in service, let this order go? One engine run per suitable vehicle,
+    in memory: nothing is saved."""
+    plan, planner, orders, vehicles = await load_inputs(db, plan_id)
+    order = next((o for o in orders if o["order_id"] == order_id), None)
+    if order is None:
+        return {"order_id": order_id, "today": None, "options": []}
+    trips, left = run_planner(planner, orders, vehicles)
+    served_now = sum(len(t.orders) for t in trips)
+    workshop = await rows(db, """
+        SELECT v.vehicle_id, v.code, v.source_id, c.is_van, c.carries_chilled, v.max_weight_kg::float AS max_kg,
+               v.max_volume_m3::float AS max_m3
+        FROM vehicle v JOIN vehicle_class c USING (class_id)
+        WHERE v.depot_id = :depot AND NOT v.active ORDER BY v.vehicle_id""", {"depot": plan["depot_id"]})
+    options = []
+    for w in workshop:
+        suits = ((w["carries_chilled"] or order["temp"] == "ambient") and (w["is_van"] or not order["van_only"])
+                 and order["kg"] <= w["max_kg"] and order["m3"] <= w["max_m3"])
+        if not suits:
+            continue
+        _, planner2, orders2, vehicles2 = await load_inputs(db, plan_id, [w["vehicle_id"]])
+        trips2, left2 = run_planner(planner2, orders2, vehicles2)
+        options.append({"vehicle_id": w["vehicle_id"], "vehicle": w["source_id"],
+                        "serves_order": all(o.order_id != order_id for o in left2),
+                        "orders_served": sum(len(t.orders) for t in trips2), "orders_total": len(orders2)})
+    return {"order_id": order_id, "today": {"orders_served": served_now, "orders_total": len(orders)}, "options": options}
+
+
+async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
+    """Replace the plan's unreleased trips with the engine's proposal and draft deferrals for the rest."""
+    # Start clean: drop this plan's draft trips and deferral drafts (orders return to the queue). The
+    # database does it after checking the role, the depot and that the plan is still a draft.
+    await scalar(db, "SELECT clear_plan_draft(:p, :u)", {"p": plan_id, "u": actor_id})
+    plan, planner, order_rows, vehicle_rows = await load_inputs(db, plan_id)
+    trips, left = run_planner(planner, order_rows, vehicle_rows)
 
     # Write the trips through the workflow functions, so every database rule is checked again.
     for trip in sorted(trips, key=lambda t: (t.vehicle.vehicle_id, t.depart)):

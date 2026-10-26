@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, DbSession, require_roles
 from app.modules.common import not_found, one, rows, scalar
-from app.modules.dispatch.engine import propose
+from app.modules.dispatch.engine import propose, what_if
 
 router = APIRouter(prefix="/dispatch", tags=["Dispatcher"])
 Dispatcher = Annotated[CurrentUser, Depends(require_roles("dispatcher"))]
@@ -114,6 +114,53 @@ async def runs(user: Dispatcher, db: DbSession):
     }
 
 
+@router.get("/runs/{service_date}/outlook")
+async def outlook(service_date: date, user: Dispatcher, db: DbSession):
+    """Before the plan: what is coming in for a delivery day against the fleet that is available."""
+    depot = _depot(user)
+    return {
+        "service_date": service_date,
+        "cutoff_at": await scalar(db, "SELECT run_cutoff(CAST(:d AS smallint), :day)", {"d": depot, "day": service_date}),
+        "demand": await rows(db, """
+            SELECT b.code AS brand, h.temp::text AS temp, count(*) AS orders, round(sum(h.weight_kg)) AS kg,
+                   round(sum(h.volume_m3), 1) AS m3, count(*) FILTER (WHERE ou.van_only) AS van_only,
+                   count(*) FILTER (WHERE h.deferral_count > 0) AS moved_in
+            FROM order_header h JOIN outlet ou ON ou.outlet_id = h.outlet_id JOIN brand b ON b.brand_id = ou.brand_id
+            WHERE ou.depot_id = :d AND h.delivery_date = :day AND h.status <> 'not_delivered'
+            GROUP BY b.code, h.temp ORDER BY b.code, h.temp""", {"d": depot, "day": service_date}),
+        "fleet": await rows(db, """
+            SELECT c.is_van, c.carries_chilled, count(*) FILTER (WHERE v.active) AS available,
+                   round(sum(v.max_volume_m3) FILTER (WHERE v.active), 1) AS m3_per_trip,
+                   round(sum(v.max_weight_kg) FILTER (WHERE v.active)) AS kg_per_trip,
+                   COALESCE(array_agg(v.source_id ORDER BY v.source_id) FILTER (WHERE NOT v.active), '{}') AS in_workshop
+            FROM vehicle v JOIN vehicle_class c USING (class_id) WHERE v.depot_id = :d
+            GROUP BY c.is_van, c.carries_chilled ORDER BY c.carries_chilled DESC, c.is_van DESC""", {"d": depot}),
+        "fresh_budget_minutes": await scalar(db, "SELECT setting_int('fresh_budget_minutes')"),
+    }
+
+
+@router.get("/capacity")
+async def capacity(user: Dispatcher, db: DbSession):
+    """Plan future capacity: the demand forecast (Datathon Task 2A) for this depot, week by week, and the
+    fleet that would carry it."""
+    depot = _depot(user)
+    return {
+        "forecast": await rows(db, """
+            SELECT f.iso_year, f.iso_week, f.week_start, b.code AS brand, f.total_m3, f.chilled_m3, f.source, f.loaded_at,
+                   (SELECT count(*) FROM generate_series(f.week_start, f.week_start + 6, interval '1 day') g
+                     WHERE is_working_day(g::date)) AS operating_days,
+                   (SELECT string_agg(DISTINCT c.festival, ', ') FROM calendar_day c
+                     WHERE c.day BETWEEN f.week_start AND f.week_start + 6 AND c.festival IS NOT NULL) AS festival,
+                   (SELECT bool_or(c.is_payday) FROM calendar_day c WHERE c.day BETWEEN f.week_start AND f.week_start + 6) AS payday
+            FROM demand_forecast f JOIN brand b ON b.brand_id = f.brand_id
+            WHERE f.depot_id = :d ORDER BY f.week_start, b.code""", {"d": depot}),
+        "fleet": await rows(db, """
+            SELECT v.source_id AS vehicle, c.name AS class, c.is_van, c.carries_chilled, v.active,
+                   v.max_volume_m3::float AS m3, v.max_weight_kg::float AS kg
+            FROM vehicle v JOIN vehicle_class c USING (class_id) WHERE v.depot_id = :d ORDER BY v.source_id""", {"d": depot}),
+    }
+
+
 @router.post("/runs/{service_date}/close")
 async def close_orders(service_date: date, user: Dispatcher, db: DbSession):
     """Close orders now (normally automatic at the 16:00 cutoff): confirms placed orders, opens the plan."""
@@ -133,13 +180,15 @@ async def plan_view(plan_id: int, user: Dispatcher, db: DbSession):
     routes = await rows(db, "SELECT * FROM route_board WHERE plan_id = :p ORDER BY vehicle_code, route_seq", {"p": plan_id})
     stops = await rows(db, """
         SELECT s.route_id, s.stop_id, s.seq, ou.code AS outlet_code, ou.name AS outlet_name, s.planned_arrival,
-               s.service_minutes, ou.unload, ou.van_only,
+               s.service_minutes, ou.unload, ou.van_only, w.opens AS window_opens, w.closes AS window_closes,
                (SELECT jsonb_agg(jsonb_build_object('order_id', h.order_id, 'ref', h.confirmation_no, 'temp', h.temp,
                                                     'kg', h.weight_kg, 'm3', h.volume_m3, 'status', h.status))
                   FROM stop_order so JOIN order_header h ON h.order_id = so.order_id
                  WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS orders
         FROM stop s JOIN outlet ou ON ou.outlet_id = s.outlet_id
-        WHERE s.plan_id = :p AND s.removed_at IS NULL ORDER BY s.route_id, s.seq""", {"p": plan_id})
+        LEFT JOIN LATERAL (SELECT min(x.opens) AS opens, max(x.closes) AS closes FROM outlet_window x
+                           WHERE x.outlet_id = s.outlet_id AND x.isodow = EXTRACT(isodow FROM CAST(:day AS date))::smallint) w ON true
+        WHERE s.plan_id = :p AND s.removed_at IS NULL ORDER BY s.route_id, s.seq""", {"p": plan_id, "day": plan["service_date"]})
     for r in routes:
         r["stops"] = [s for s in stops if s["route_id"] == r["route_id"]]
     return {
@@ -176,6 +225,14 @@ async def engine_propose(plan_id: int, user: Dispatcher, db: DbSession):
     result["violations"] = await rows(db, "SELECT * FROM plan_violations(:p)", {"p": plan_id})
     await db.commit()
     return result
+
+
+@router.get("/plans/{plan_id}/orders/{order_id}/what-if")
+async def plan_what_if(plan_id: int, order_id: int, user: Dispatcher, db: DbSession):
+    """What would let a deferred order go: each suitable vehicle in the workshop, back in service, tried with
+    the engine in memory. Nothing is saved."""
+    await _plan(db, plan_id, user)
+    return await what_if(db, plan_id, order_id)
 
 
 @router.post("/plans/{plan_id}/move")

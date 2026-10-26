@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -8,17 +9,48 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy import text
 
 from app.api.v1.router import router
 from app.config import Settings, get_settings
-from app.db.session import connected_role, db_is_healthy, engine
+from app.db.session import AsyncSessionLocal, begin_transaction, connected_role, db_is_healthy, engine
 from app.security.body_size_limit import BodySizeLimitMiddleware
 from app.security.rate_limit import limiter
 from app.security.security_headers import SecurityHeadersMiddleware
 
 
+async def close_due_runs() -> int:
+    """Close order intake for every run whose cutoff has passed and open its plan (as the system admin
+    account). What the dispatcher's "Close orders now" button does, on the clock."""
+    async with AsyncSessionLocal() as db:
+        admin = await db.scalar(text("SELECT user_id FROM wp.app_user WHERE role = 'admin' AND active ORDER BY user_id LIMIT 1"))
+        if admin is None:
+            return 0
+        await begin_transaction(db, admin)
+        due = (await db.execute(text("SELECT run_id FROM wp.run WHERE state = 'open' AND cutoff_at <= now() ORDER BY cutoff_at"))).scalars().all()
+        for run_id in due:
+            await db.execute(text("SELECT wp.close_run(:r)"), {"r": run_id})
+            await db.execute(text("SELECT wp.create_plan(:r, :u)"), {"r": run_id, "u": admin})
+        await db.commit()
+        return len(due)
+
+
+async def cutoff_loop(every: int) -> None:
+    log = logging.getLogger("app.cutoff")
+    while True:
+        try:
+            closed = await close_due_runs()
+            if closed:
+                log.info("Closed %s run(s) at the cutoff", closed)
+        except Exception:  # keep the loop alive; the next tick tries again
+            log.exception("Automatic cutoff failed")
+        await asyncio.sleep(every)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
+    settings = get_settings()
+    task = asyncio.create_task(cutoff_loop(settings.AUTO_CUTOFF_SECONDS)) if settings.AUTO_CUTOFF_SECONDS > 0 else None
     try:
         role = await connected_role()
         if role.get("superuser") or role.get("owner"):
@@ -28,6 +60,8 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None]:
     except Exception:  # the database may not be up yet; /health reports that
         logging.getLogger(__name__).exception("Could not check the database role")
     yield
+    if task is not None:
+        task.cancel()
     await engine.dispose()
 
 def _security_headers(settings: Settings) -> dict[str, str]:

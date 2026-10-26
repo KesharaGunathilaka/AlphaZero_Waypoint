@@ -42,6 +42,7 @@ services:
       # Sign-in. "local" (default): the API checks the demo accounts' passwords itself, no outside
       # account needed. The deployed app uses Clerk (AUTH_MODE=clerk + the CLERK_* values).
       AUTH_MODE: ${AUTH_MODE:-local}
+      AUTO_CUTOFF_SECONDS: 60   # close orders at the 16:00 cutoff on the clock
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:-docker-local-only-secret-change-me-0123456789}
       CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
       CLERK_ISSUER: ${CLERK_ISSUER:-}

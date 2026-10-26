@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: list[str] = ["localhost"]
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     RATE_LIMIT_DEFAULT: str = "100/minute"
+    # Close order intake at each run's 16:00 cutoff and open its plan, checked every this many seconds.
+    # 0 = off (tests, serverless hosting); docker-compose.yml turns it on.
+    AUTO_CUTOFF_SECONDS: int = 0
     MAX_REQUEST_BODY_BYTES: PositiveInt = 11 * 1024 * 1024
 
     # Postgres: either one DATABASE_URL (Neon, as copied from its dashboard) or the POSTGRES_*

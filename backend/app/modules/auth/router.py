@@ -67,8 +67,12 @@ async def demo_accounts(db: DbSession):
     _local_only()
     result = await db.execute(text("""
         SELECT u.email, u.name, u.role::text AS role, ou.code AS outlet, v.source_id AS vehicle,
-               CASE WHEN u.all_depots THEN 'Kandy and Peliyagoda' ELSE d.name END AS depot
+               CASE WHEN u.all_depots THEN 'Kandy and Peliyagoda' ELSE COALESCE(d.name, od.name) END AS depot,
+               b.name AS brand, di.name AS district, vc.name AS vehicle_class
         FROM wp.app_user u LEFT JOIN wp.outlet ou ON ou.outlet_id = u.outlet_id
+        LEFT JOIN wp.brand b ON b.brand_id = ou.brand_id LEFT JOIN wp.district di ON di.district_id = ou.district_id
+        LEFT JOIN wp.depot od ON od.depot_id = ou.depot_id
+        LEFT JOIN wp.vehicle_class vc ON vc.class_id = (SELECT class_id FROM wp.vehicle WHERE vehicle_id = u.vehicle_id)
         LEFT JOIN wp.vehicle v ON v.vehicle_id = u.vehicle_id LEFT JOIN wp.depot d ON d.depot_id = u.depot_id
         WHERE u.active AND u.password_hash IS NOT NULL AND u.role <> 'admin'
         ORDER BY array_position(ARRAY['dispatcher','loader','driver','store_manager'], u.role::text), u.email"""))
