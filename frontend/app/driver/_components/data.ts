@@ -45,6 +45,8 @@ export type DriverRun = {
   loaded: { order_id: number; line_no: number; qty_loaded: number }[];
   windows: { stop_id: number; opens: string; closes: string }[];
   instructions: { instruction_id: string; route_id: number; stop_id: number | null; type: string; text: string | null; sent_at: string; state: string }[];
+  /** Who usually signs for the goods at each store (outlet code -> up to three names), from past deliveries. */
+  signers?: Record<string, string[]>;
   server_time: string;
 };
 
