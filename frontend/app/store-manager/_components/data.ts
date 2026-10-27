@@ -70,6 +70,21 @@ export type DeliveryProgress = {
   behind_minutes: number;
   driver_name: string | null;
   vehicle: string;
+  /** Dispatch's lateness model for this delivery, when the van is loaded or on the road. */
+  forecast?: DeliveryForecast | null;
+};
+
+/** The store's answer to "likely after your window". */
+export type ReceivingReply = { answer: "will_receive" | "cannot_receive"; receive_until: string | null; replied_at: string };
+
+export type DeliveryForecast = {
+  /** The model's arrival from where the van really is, with each stop's predicted handling time. */
+  expected_arrival: string;
+  window_closes: string | null;
+  /** Dispatch has an alert: today's delays make it likely after the window. */
+  likely_late: boolean;
+  late_probability: number | null;
+  reply: ReceivingReply | null;
 };
 
 export type ReceiptLine = {

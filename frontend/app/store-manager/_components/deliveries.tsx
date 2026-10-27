@@ -21,6 +21,7 @@ import {
   type StoreOrder,
   type Temp,
 } from "./data";
+import { LateNotice } from "./late-notice";
 import { storeLayout } from "./layout";
 import { LinkButton } from "./link-button";
 import { ChangeOrderAction } from "./order-actions";
@@ -144,6 +145,9 @@ function ScheduledCard({
         )}
       </div>
       {order.progress && <LiveProgress progress={order.progress} stopsBefore={order.stops_before_yours} />}
+      {order.progress?.forecast?.likely_late && !order.progress.arrived_at && (
+        <LateNotice orderId={order.order_id} forecast={order.progress.forecast} />
+      )}
       <div className="text-[13px] leading-[18px] text-wp-text-2">
         {unloadNote(order.unload)}. {plural(order.lines?.length ?? 0, "line")}.{" "}
         {order.progress ? "" : window ? "The plan is released." : "Your arrival window appears when dispatch releases the plan."}
@@ -162,13 +166,15 @@ function LiveProgress({ progress: p, stopsBefore }: { progress: DeliveryProgress
   const now = useNow(30_000);
   const onRoad = p.route_state === "on_the_way" || Boolean(p.departed_at);
   const late = p.behind_minutes >= 5;
+  // The lateness model's arrival (from where the van is, with each stop's handling time) when dispatch has it.
+  const eta = p.forecast?.expected_arrival ?? p.eta;
   const before = stopsBefore ?? p.stop_seq - 1;
   const done = Math.max(0, p.stop_seq - 1 - before);
   const who = `${p.vehicle}${p.driver_name ? ` · driver ${p.driver_name}` : ""}`;
 
   let headline: string;
   if (p.arrived_at) headline = `Arrived at ${formatTime(p.arrived_at)}`;
-  else if (onRoad) headline = before === 0 ? `Next stop is yours · about ${formatTime(p.eta)}` : `On the way · ${plural(before, "stop")} before yours`;
+  else if (onRoad) headline = before === 0 ? `Next stop is yours · about ${formatTime(eta)}` : `On the way · ${plural(before, "stop")} before yours`;
   else headline = p.route_state === "loaded" ? "Loaded, leaving the depot soon" : "Being loaded at the depot";
 
   return (
@@ -178,7 +184,7 @@ function LiveProgress({ progress: p, stopsBefore }: { progress: DeliveryProgress
       {!p.arrived_at && (
         <div className="text-[12px] text-wp-text-2">
           {onRoad
-            ? <>Expected about <b className="text-wp-text">{formatTime(p.eta)}</b> ({fromNow(p.eta, now)}){late ? ` · running ${p.behind_minutes} min late` : " · on time"}</>
+            ? <>Expected about <b className="text-wp-text">{formatTime(eta)}</b> ({fromNow(eta, now)}){late ? ` · running ${p.behind_minutes} min late` : " · on time"}</>
             : <>Planned at your store {formatTime(p.planned_arrival)}</>}
         </div>
       )}
