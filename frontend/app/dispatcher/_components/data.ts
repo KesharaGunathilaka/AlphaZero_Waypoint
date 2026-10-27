@@ -127,7 +127,26 @@ export type PlanView = {
   vehicles: Vehicle[];
   reasons: Reason[];
   next_operating_day: string | null;
+  lateness: Lateness | null;
 };
+
+/** Our Datathon Task 1 model on one stop: chance of arriving after the window closes, expected arrival and handling. */
+export type StopForecast = {
+  late_probability: number;
+  level: "likely" | "risk" | "ok";
+  service_minutes: number;
+  allowance_minutes: number;
+  expected_arrival: string;
+  window_closes?: string | null;
+  why: string[];
+  /** Live: the chance recorded when the plan was sent. */
+  was?: number;
+};
+/** The store's answer to "likely after your window". */
+export type ReceivingReply = { answer: "will_receive" | "cannot_receive"; receive_until: string | null; replied_at: string };
+/** Null when no model is installed on the server. In Live, `level` is "likely" only where today's delays raised a
+ *  stop's chance since the plan was sent (an alert); elsewhere "ok". */
+export type Lateness = { model: string; history_cutoff: string; stops: Record<string, StopForecast>; alerts?: Record<string, unknown> };
 
 /** Before the plan: what is coming in for a delivery day against the fleet that can carry it. */
 export type Outlook = {
@@ -204,6 +223,11 @@ export type Exception = {
   flag_id: string | null;
   since: string | null;
   detail: string;
+  /** likely_late only: the model's chance now and when the plan was sent, why, and the store's answer. */
+  late_probability?: number;
+  was?: number;
+  why?: string[];
+  reply?: ReceivingReply | null;
 };
 export type MonitorStop = {
   route_id: number;
@@ -241,6 +265,7 @@ export type Monitor = {
   exceptions: Exception[];
   stops: MonitorStop[];
   closeout: Closeout[];
+  lateness: Lateness | null;
   server_time: string;
 };
 
@@ -250,6 +275,7 @@ export const EXCEPTION_STYLE: Record<string, { label: string; state: Tone }> = {
   short_loaded: { label: "Short-loaded", state: "crit" },
   no_signal: { label: "No signal", state: "offline" },
   late: { label: "Late", state: "warn" },
+  likely_late: { label: "Likely to miss window", state: "warn" },
   loader_flag: { label: "Loader flag", state: "warn" },
   plan_conflict: { label: "Plan conflict", state: "warn" },
   instruction_unseen: { label: "Instruction unseen", state: "info" },

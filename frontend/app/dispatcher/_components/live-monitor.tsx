@@ -7,11 +7,13 @@ import { Banner, StatusPill, type Tone } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { EXCEPTION_STYLE, type Closeout, type Exception, type FleetRow, type Monitor, type MonitorStop, type RunProgress } from "./data";
+import { EXCEPTION_STYLE, type Closeout, type Exception, type FleetRow, type Lateness, type Monitor, type MonitorStop, type RunProgress } from "./data";
+import { LateRisk, countLevel, forecastOf, percent, worstStop } from "./late-risk";
+import { AlertSoundToggle, useLiveAlerts } from "./live-alerts";
 import { LiveOverview } from "./live-overview";
 
 const FLEET_COLUMNS = "grid grid-cols-[96px_120px_110px_minmax(0,1fr)_64px_180px] gap-3";
-const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_56px_96px_70px] gap-2";
+const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_76px_96px_70px] gap-2";
 
 /** How a vehicle is doing, worst first. No signal never shows as "on time": we do not know. */
 export function vehicleStatus(f: FleetRow): { state: Tone; label: string; risk: number } {
@@ -62,6 +64,7 @@ export function LiveMonitor() {
   const [view, setView] = useState<View>("overview");
   const [full, setFull] = useState(false);
   const monitor = useApiData<Monitor>(`/dispatch/monitor?depot=${scope}`, 15_000);
+  const alerts = useLiveAlerts(monitor.data?.exceptions);
   const request = useApi();
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [moved, setMoved] = useState<Record<number, string>>({});
@@ -147,6 +150,7 @@ export function LiveMonitor() {
               ))}
             </div>
           )}
+          <AlertSoundToggle {...alerts} />
           <Button variant="secondary" className="hidden h-8 gap-1.5 lg:inline-flex" onClick={toggleFullScreen}
                   title="Use the whole screen, e.g. on the office wall display">
             {full ? <Minimize2 className="size-3.5" aria-hidden /> : <Maximize2 className="size-3.5" aria-hidden />}
@@ -168,8 +172,16 @@ export function LiveMonitor() {
   );
 }
 
-/** Stop by stop for one trip: plan against what the phone reported. */
-export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[] }) {
+/** The stops of a trip still ahead (not delivered or failed yet), with the model's forecast for each. */
+export function aheadRisk(m: Monitor, routeId: number) {
+  const ahead = m.stops.filter((s) => s.route_id === routeId && !s.delivered_at);
+  return { worst: worstStop(m.lateness, ahead.map((s) => s.stop_id)), ahead,
+           likely: countLevel(m.lateness, ahead.map((s) => s.stop_id), "likely"),
+           risk: countLevel(m.lateness, ahead.map((s) => s.stop_id), "risk") };
+}
+
+/** Stop by stop for one trip: plan against what the phone reported, and the model's forecast for what is ahead. */
+export function TripStops({ trip, stops, lateness }: { trip: FleetRow; stops: MonitorStop[]; lateness?: Lateness | null }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[11px] text-wp-text-2">
@@ -185,8 +197,18 @@ export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[
           <div key={s.stop_id}
                className={cn(DETAIL_COLUMNS, "items-center border-t border-wp-border py-2",
                              unknown && "bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,var(--wp-surface-2)_6px,var(--wp-surface-2)_12px)]")}>
-            <div>{s.delivered_at ? (failed ? "✕" : "●") : "○"} {s.outlet_code}</div>
-            <div>{formatTime(s.planned_arrival)}</div>
+            <div className="flex flex-col items-start gap-0.5">
+              <span>{s.delivered_at ? (failed ? "✕" : "●") : "○"} {s.outlet_code}</span>
+              {!s.delivered_at && <LateRisk f={forecastOf(lateness, s.stop_id)} />}
+            </div>
+            <div>
+              {formatTime(s.planned_arrival)}
+              {!s.delivered_at && forecastOf(lateness, s.stop_id) && (
+                <div className="text-[11px] text-wp-text-2" title={forecastOf(lateness, s.stop_id)!.why.join(" · ")}>
+                  model ~{formatTime(forecastOf(lateness, s.stop_id)!.expected_arrival)}
+                </div>
+              )}
+            </div>
             <div className={failed ? "font-semibold text-wp-crit" : unknown ? "text-wp-offline" : "text-wp-text"}>
               {s.delivered_at ? (failed ? "Not delivered" : formatTime(s.delivered_at)) : unknown ? "Not confirmed" : s.arrived_at ? `Arrived ${formatTime(s.arrived_at)}` : "—"}
             </div>
@@ -208,7 +230,8 @@ export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[
 export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }: {
   e: Exception; actions: LiveActions; showDepot: boolean; onOpen?: () => void; compact?: boolean;
 }) {
-  const style = EXCEPTION_STYLE[e.kind] ?? { label: e.kind, state: "info" as Tone };
+  const base = EXCEPTION_STYLE[e.kind] ?? { label: e.kind, state: "info" as Tone };
+  const style = e.kind === "likely_late" ? { ...base, state: (e.severity === "crit" ? "crit" : e.severity === "info" ? "info" : "warn") as Tone } : base;
   const isFlag = Boolean(e.flag_id) && (e.kind === "loader_flag" || e.kind === "driver_reported");
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-wp-border first:border-t-0", compact ? "py-2" : "py-3")}>
@@ -221,6 +244,13 @@ export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }:
               className={cn("min-w-0 basis-full text-left font-semibold", compact ? "text-[13px]" : "", onOpen && "cursor-pointer hover:underline")}>
         {actions.named(e.detail)}
       </button>
+      {e.kind === "likely_late" && e.late_probability != null && (
+        <div className="basis-full text-[11px] text-wp-text-2">
+          Chance now <b className="text-wp-text">{percent(e.late_probability)}</b>, {percent(e.was ?? 0)} when the plan was sent
+          {e.why && e.why.length > 0 && <> · {e.why.join(" · ")}</>}
+          {!e.reply && " · the store has been told"}
+        </div>
+      )}
       {e.kind === "no_signal" && !compact && (
         <div className="basis-full text-[11px] text-wp-text-2">
           The driver’s phone keeps recording offline. Stops after the last signal show as not confirmed until it syncs.
@@ -255,7 +285,10 @@ export function MovedToday({ actions }: { actions: LiveActions }) {
 function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions; showDepot: boolean }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
-  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || a.vehicle_source_id.localeCompare(b.vehicle_source_id));
+  // Same status: the trip whose stops ahead are most likely to be late goes first.
+  const lateAhead = (f: FleetRow) => aheadRisk(m, f.route_id).worst?.f.late_probability ?? 0;
+  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || lateAhead(b) - lateAhead(a)
+                                            || a.vehicle_source_id.localeCompare(b.vehicle_source_id));
   const finished = (f: FleetRow) => f.state === "complete" && !f.no_signal && f.exception_count === 0;
   const doneCount = fleet.filter(finished).length;
   const shown = showDone ? fleet : fleet.filter((f) => !finished(f));
@@ -305,7 +338,10 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
                   <div className="text-[12px] text-wp-text-2">{f.depot}</div>
                   <div className="font-semibold">{f.vehicle_source_id} · trip {f.route_seq}</div>
                   <div className="text-xs tracking-[2px]">{dots(f)}</div>
-                  <div>{f.next_outlet ?? (f.state === "complete" ? "Back to depot" : "—")}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {f.next_outlet ?? (f.state === "complete" ? "Back to depot" : "—")}
+                    <WorstAhead m={m} routeId={f.route_id} />
+                  </div>
                   <div>{f.next_planned ? formatTime(f.next_planned) : "—"}</div>
                   <div><StatusPill state={status.state}>{status.label}</StatusPill></div>
                 </button>
@@ -320,7 +356,7 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
               <h2 className="text-[15px] leading-5 font-semibold">{chosen.vehicle_source_id} trip {chosen.route_seq} · plan against actual</h2>
               <button type="button" onClick={() => setSelected(null)} className="cursor-pointer text-sm text-wp-muted">✕ Close</button>
             </div>
-            <TripStops trip={chosen} stops={m.stops.filter((s) => s.route_id === chosen.route_id)} />
+            <TripStops trip={chosen} stops={m.stops.filter((s) => s.route_id === chosen.route_id)} lateness={m.lateness} />
           </section>
         )}
       </div>
@@ -437,4 +473,10 @@ function CloseoutCard({ c, actions }: { c: Closeout; actions: LiveActions }) {
 
 function Page({ children }: { children: ReactNode }) {
   return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
+}
+
+/** The trip's worst stop still ahead, named, since it is often not the next one. */
+function WorstAhead({ m, routeId }: { m: Monitor; routeId: number }) {
+  const { worst, ahead } = aheadRisk(m, routeId);
+  return <LateRisk f={worst?.f} at={ahead.find((s) => s.stop_id === worst?.stopId)?.outlet_code} />;
 }

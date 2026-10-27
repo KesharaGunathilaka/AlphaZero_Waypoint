@@ -18,6 +18,8 @@ export type LaneBar = {
   fill?: number;
   dim?: boolean;
   selected?: boolean;
+  /** Predicted lateness on the trip: a red (likely late) or amber (at risk) marker at its end. */
+  risk?: "likely" | "risk";
   onClick: () => void;
 };
 export type Lane = { key: string; label: string; bars: LaneBar[] };
@@ -76,6 +78,11 @@ export function LaneTimeline({ lanes, now, compact = false }: { lanes: Lane[]; n
                       <div className={cn("absolute inset-y-0 left-0", b.fillClassName)} style={{ width: `${Math.min(1, b.fill) * 100}%` }} />
                     )}
                     <span className="relative block truncate px-1 text-[10px] leading-none font-semibold">{b.text}</span>
+                    {b.risk && (
+                      <span aria-hidden="true"
+                            className={cn("absolute top-0.5 right-0.5 size-2 rounded-full ring-1 ring-wp-surface",
+                                          b.risk === "likely" ? "bg-wp-crit" : "bg-wp-gauge-amber")} />
+                    )}
                   </button>
                 );
               })}

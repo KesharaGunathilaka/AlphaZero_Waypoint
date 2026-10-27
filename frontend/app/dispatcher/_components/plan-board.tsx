@@ -11,12 +11,13 @@ import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND, BRAND_NAME, quickBlock, type BrandCode, type PlanView, type Route, type Run, type Vehicle, type WhatIf } from "./data";
 import { DayProgress } from "./day-progress";
+import { ForecastLine, LateRisk, ModelNote, countLevel, forecastOf, percent, worstStop } from "./late-risk";
 import { LaneTimeline, type Lane } from "./lane-timeline";
 import { OutlookPanel } from "./outlook";
 import { OrderLink } from "./order-panel";
 import type { PlanActions, Tab } from "./dispatcher-app";
 
-const FILTERS = ["All", "Fresh", "Style", "Tech", "Chilled", "Vans"] as const;
+const FILTERS = ["All", "Fresh", "Style", "Tech", "Chilled", "Vans", "Late risk"] as const;
 type Filter = (typeof FILTERS)[number];
 
 /** An order the dispatcher wants to put on another trip. */
@@ -75,6 +76,8 @@ export function PlanBoard({
   const [moving, setMoving] = useState<Moving | null>(null);
   const [showIdle, setShowIdle] = useState(false);
   const [showTimeline, setShowTimeline] = useState(true);
+  // Predicted lateness is folded away: before vans leave it mostly repeats each store's history.
+  const [showLate, setShowLate] = useState(false);
 
   // Opened from the Deferred tab: "Try to fit" this order.
   useEffect(() => {
@@ -108,6 +111,7 @@ export function PlanBoard({
   }
 
   const released = plan.plan.state === "released";
+  const late = showLate || filter === "Late risk" ? plan.lateness : null;
   // Before the engine runs nothing is "deferred" yet: every order is simply not planned.
   const built = plan.routes.length > 0;
   const deferred = built ? plan.unplanned : [];
@@ -126,6 +130,7 @@ export function PlanBoard({
         case "Tech": if (r.brand_code !== "T") return false; break;
         case "Chilled": if (!r.stops.some((s) => s.orders?.some((o) => o.temp === "chilled"))) return false; break;
         case "Vans": if (!r.is_van) return false; break;
+        case "Late risk": if (!r.stops.some((st) => (forecastOf(plan.lateness, st.stop_id)?.level ?? "ok") !== "ok")) return false; break;
       }
       if (!q) return true;
       return [v?.source_id, r.vehicle_code, r.district_name, ...r.stops.map((s) => s.outlet_code)]
@@ -156,12 +161,16 @@ export function PlanBoard({
         label: v?.source_id ?? trips[0].vehicle_code,
         bars: trips.map((r) => {
           const chilledTrip = r.stops.some((st) => st.orders?.some((o) => o.temp === "chilled"));
+          const ids = r.stops.map((st) => st.stop_id);
+          const likely = countLevel(late, ids, "likely");
+          const atRisk = countLevel(late, ids, "risk");
           return {
+            risk: likely ? "likely" as const : atRisk ? "risk" as const : undefined,
             id: r.route_id,
             start: Date.parse(r.depart_at),
             end: Date.parse(r.return_at),
             text: `${chilledTrip ? "❄ " : ""}${r.district_name} · ${r.stops.length}`,
-            title: `${v?.source_id ?? r.vehicle_code} trip ${r.route_seq} · ${BRAND_NAME[r.brand_code]} ${r.district_name} · ${formatTime(r.depart_at)}–${formatTime(r.return_at)} · ${r.stops.length} stops · load ${pct(r)}% by ${bindingBy(r)}`,
+            title: `${v?.source_id ?? r.vehicle_code} trip ${r.route_seq} · ${BRAND_NAME[r.brand_code]} ${r.district_name} · ${formatTime(r.depart_at)}–${formatTime(r.return_at)} · ${r.stops.length} stops · load ${pct(r)}% by ${bindingBy(r)}${likely ? ` · ${likely} likely late` : atRisk ? ` · ${atRisk} at risk of lateness` : ""}`,
             ariaLabel: `${v?.source_id ?? r.vehicle_code} trip ${r.route_seq}, ${BRAND_NAME[r.brand_code]} ${r.district_name}, ${formatTime(r.depart_at)} to ${formatTime(r.return_at)}`,
             className: BRAND_BAR[r.brand_code],
             fillClassName: BRAND_FILL[r.brand_code],
@@ -230,13 +239,19 @@ export function PlanBoard({
         </section>
       )}
 
+      {built && plan.lateness && (
+        <LatenessPanel plan={plan} vehicleOf={vehicleOf} onReveal={reveal} open={showLate} onToggle={() => setShowLate(!showLate)} />
+      )}
+
       {built && (
         <section className="rounded-lg border border-wp-border bg-wp-surface p-3">
           <button type="button" onClick={() => setShowTimeline(!showTimeline)} aria-expanded={showTimeline}
                   className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-left">
             {showTimeline ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
             <h2 className="text-[15px] font-semibold">Day timeline</h2>
-            <span className="text-[12px] text-wp-text-2">one lane per vehicle · shading = how full · click a trip to open it</span>
+            <span className="text-[12px] text-wp-text-2">
+              one lane per vehicle · shading = how full{late ? " · dot = predicted late stop" : ""} · click a trip to open it
+            </span>
             <span className="ml-auto flex gap-3 text-[11px] text-wp-text-2">
               {(["F", "S", "T"] as BrandCode[]).map((b) => (
                 <span key={b} className="flex items-center gap-1"><span className={cn("size-2.5 rounded-sm border", BRAND_BAR[b])} />{BRAND_NAME[b]}</span>
@@ -277,6 +292,9 @@ export function PlanBoard({
           const isOpen = open.has(r.route_id);
           const chilled = r.stops.some((st) => st.orders?.some((o) => o.temp === "chilled"));
           const load = pct(r);
+          const ids = r.stops.map((st) => st.stop_id);
+          const likely = countLevel(late, ids, "likely");
+          const atRisk = countLevel(late, ids, "risk");
           return (
             <div key={r.route_id} id={`trip-${r.route_id}`} className="scroll-mt-28 border-b border-wp-border last:border-b-0">
               <button type="button" onClick={() => toggle(r.route_id)} aria-expanded={isOpen}
@@ -299,8 +317,15 @@ export function PlanBoard({
                   <div className="font-semibold">{formatTime(r.depart_at)} – {formatTime(r.return_at)}</div>
                   {lastDrop(r) && <div className="text-[11px] text-wp-text-2">last drop {formatTime(lastDrop(r)!)}</div>}
                 </div>
-                <div className="truncate text-wp-text-2" title={r.stops.map((st) => st.outlet_code).join(" → ")}>
-                  {r.stops.length} · {r.stops.map((st) => st.outlet_code).join(" → ")}
+                <div className="min-w-0">
+                  <div className="truncate text-wp-text-2" title={r.stops.map((st) => st.outlet_code).join(" → ")}>
+                    {r.stops.length} · {r.stops.map((st) => st.outlet_code).join(" → ")}
+                  </div>
+                  {(likely > 0 || atRisk > 0) && (
+                    <div className={cn("text-[11px] font-semibold", likely ? "text-wp-crit" : "text-wp-warn")}>
+                      {likely ? `◆ ${likely} likely late` : ""}{likely && atRisk ? " · " : ""}{atRisk ? `▲ ${atRisk} at risk` : ""}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-16 flex-none overflow-hidden rounded bg-wp-surface-2" role="img" aria-label={`Load ${load} percent`}>
@@ -331,6 +356,7 @@ export function PlanBoard({
                         <span className="w-12 font-semibold">{formatTime(st.planned_arrival)}</span>
                         <span className="font-semibold">{st.seq}. {st.outlet_code}</span>
                         <TimeWindow planned={st.planned_arrival} opens={st.window_opens} closes={st.window_closes} showPlanned={false} />
+                        <LateRisk f={forecastOf(late, st.stop_id)} />
                         <span className="text-[12px] text-wp-muted">{st.unload.replace("_", " ")}{st.van_only ? " · van-only" : ""}</span>
                         <span className="ml-auto flex flex-wrap gap-1.5">
                           {(st.orders ?? []).map((o) => (
@@ -348,6 +374,7 @@ export function PlanBoard({
                             </span>
                           ))}
                         </span>
+                        <ForecastLine f={forecastOf(late, st.stop_id)} className="basis-full md:pl-14" />
                       </li>
                     ))}
                   </ol>
@@ -584,4 +611,75 @@ function Title({ date, subtitle }: { date: string; subtitle: string }) {
 
 function Page({ children }: { children: ReactNode }) {
   return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
+}
+
+/**
+ * Before the vans leave: which stops our Datathon model expects after their window, worst trips first. Folded
+ * away by default and worded as what it is: before departure the model mostly repeats how each store's deliveries
+ * ran in the past. Live raises an alert when today's delays add to it.
+ */
+function LatenessPanel({ plan, vehicleOf, onReveal, open, onToggle }: {
+  plan: PlanView; vehicleOf: Map<number, Vehicle>; onReveal: (routeId: number) => void; open: boolean; onToggle: () => void;
+}) {
+  const l = plan.lateness!;
+  const trips = plan.routes
+    .map((r) => {
+      const ids = r.stops.map((st) => st.stop_id);
+      return { r, worst: worstStop(l, ids), likely: countLevel(l, ids, "likely"), risk: countLevel(l, ids, "risk") };
+    })
+    .filter((t) => t.likely + t.risk > 0)
+    .sort((a, b) => (b.worst?.f.late_probability ?? 0) - (a.worst?.f.late_probability ?? 0));
+  const likely = trips.reduce((n, t) => n + t.likely, 0);
+  const risk = trips.reduce((n, t) => n + t.risk, 0);
+  const stops = plan.routes.reduce((n, r) => n + r.stops.length, 0);
+  return (
+    <section aria-label="Predicted lateness" className="rounded-lg border border-wp-border bg-wp-surface p-3">
+      <button type="button" onClick={onToggle} aria-expanded={open}
+              className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-left">
+        {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+        <h2 className="text-[15px] font-semibold">Predicted lateness</h2>
+        <span className="text-[12px] text-wp-text-2">from history, our Datathon Task 1 model · {open ? "hide" : "show"}</span>
+      </button>
+      {open && <>
+      <p className="mt-2 text-[12px] text-wp-text-2">
+        Before vans leave, this mostly reflects how these stores’ deliveries ran in the past. Live warns you, and the store,
+        only when today’s delays raise a stop’s chance of missing its window.
+      </p>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-semibold">
+          {likely + risk === 0
+            ? `All ${stops} stops expected inside their window`
+            : `${likely} of ${stops} stops with a history of late arrivals${risk ? ` · ${risk} more at some risk` : ""} · on ${trips.length} ${trips.length === 1 ? "trip" : "trips"}`}
+        </span>
+        <span className="text-[12px] text-wp-text-2">
+          The plan times trips at free-flow speed, as the brief sets. The model adds the hour’s traffic, the day’s road disruption and each outlet’s handling history.
+        </span>
+      </div>
+      {trips.length > 0 && (
+        <ul className="mt-2 grid gap-1.5 lg:grid-cols-2">
+          {trips.slice(0, 6).map(({ r, worst, likely: n, risk: m }) => {
+            const st = r.stops.find((x) => x.stop_id === worst?.stopId);
+            return (
+              <li key={r.route_id}>
+                <button type="button" onClick={() => onReveal(r.route_id)}
+                        className="flex w-full cursor-pointer flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border border-wp-border bg-wp-surface px-2.5 py-1.5 text-left hover:bg-wp-surface-2">
+                  <b>{vehicleOf.get(r.vehicle_id)?.source_id ?? r.vehicle_code}</b>
+                  <span className="text-wp-text-2">trip {r.route_seq} · {BRAND_NAME[r.brand_code]} {r.district_name}</span>
+                  <LateRisk f={worst?.f} className="ml-auto" />
+                  <span className="basis-full text-[11px] text-wp-text-2">
+                    {n ? `${n} likely late` : ""}{n && m ? " · " : ""}{m ? `${m} at risk` : ""}
+                    {st && worst && <> · worst {st.outlet_code}: {percent(worst.f.late_probability)}, arrives ~{formatTime(worst.f.expected_arrival)}
+                      {st.window_closes ? `, window to ${st.window_closes.slice(0, 5)}` : ""}</>}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {trips.length > 6 && <div className="mt-1 text-[11px] text-wp-text-2">and {trips.length - 6} more: filter the trips by “Late risk”.</div>}
+      <ModelNote l={l} className="mt-2" />
+      </>}
+    </section>
+  );
 }

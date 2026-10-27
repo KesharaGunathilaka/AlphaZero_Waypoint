@@ -8,7 +8,8 @@ import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND_NAME, type FleetRow, type Monitor, type RunProgress } from "./data";
 import { LaneTimeline, type Lane, type LaneBar } from "./lane-timeline";
-import { AttentionRow, MovedToday, TripStops, dots, vehicleStatus, type LiveActions } from "./live-monitor";
+import { ModelNote } from "./late-risk";
+import { AttentionRow, MovedToday, TripStops, aheadRisk, dots, vehicleStatus, type LiveActions } from "./live-monitor";
 
 /** Where a trip is, for the charts: one bucket each, worst first. */
 type Bucket = "nosignal" | "attention" | "road" | "depot" | "back";
@@ -217,7 +218,7 @@ function Timeline({ m, showDepot, focus, selected, onOpen }: {
           const lanes: Lane[] = [...new Set(fleet.map((f) => f.vehicle_source_id))].sort().map((vehicle) => ({
             key: vehicle,
             label: vehicle,
-            bars: fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => tripBar(f, focus, selected, onOpen)),
+            bars: fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => tripBar(m, f, focus, selected, onOpen)),
           }));
           return (
             <div key={depot ?? "one"} className="flex min-h-0 flex-col">
@@ -231,15 +232,17 @@ function Timeline({ m, showDepot, focus, selected, onOpen }: {
   );
 }
 
-function tripBar(f: FleetRow, focus: Bucket | null, selected: number | null, onOpen: (routeId: number) => void): LaneBar {
+function tripBar(m: Monitor, f: FleetRow, focus: Bucket | null, selected: number | null, onOpen: (routeId: number) => void): LaneBar {
   const b = bucket(f);
   const status = vehicleStatus(f);
+  const late = aheadRisk(m, f.route_id);
   return {
+    risk: late.likely ? "likely" : late.risk ? "risk" : undefined,
     id: f.route_id,
     start: Date.parse(f.depart_at),
     end: Date.parse(f.return_at ?? f.depart_at),
     text: `${f.district} ${f.stops_done}/${f.stops_total}`,
-    title: `${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}`,
+    title: `${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}${late.likely ? ` · ${late.likely} likely late ahead` : late.risk ? ` · ${late.risk} at risk ahead` : ""}`,
     ariaLabel: `${f.vehicle_source_id} trip ${f.route_seq}, ${f.district}, ${f.stops_done} of ${f.stops_total} stops, ${status.label}`,
     className: BUCKETS.find((s) => s.key === b)!.bar,
     fillClassName: FILL[b],
@@ -383,7 +386,8 @@ function Drawer({ m, detail, showDepot, onOpen, onSet }: {
         {m.exceptions.filter((e) => e.route_id === trip.route_id).map((e, i) => (
           <div key={i} className="rounded-md bg-wp-warn-tint px-3 py-1.5 text-[12px] font-semibold text-wp-warn">{e.detail}</div>
         ))}
-        <TripStops trip={trip} stops={m.stops.filter((s) => s.route_id === trip.route_id)} />
+        <TripStops trip={trip} stops={m.stops.filter((s) => s.route_id === trip.route_id)} lateness={m.lateness} />
+        {m.lateness && <ModelNote l={m.lateness} />}
       </>
     );
   } else {
