@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # Close order intake at each run's 16:00 cutoff and open its plan, checked every this many seconds.
     # 0 = off (tests, serverless hosting); docker-compose.yml turns it on.
     AUTO_CUTOFF_SECONDS: int = 0
+    # Our Datathon Task 1 model, installed by scripts/install_lateness_model.py (kept out of the repository, as
+    # derived from the competition data). Empty: the plan and Live show no predicted lateness.
+    LATENESS_MODEL_DIR: str = ""
     MAX_REQUEST_BODY_BYTES: PositiveInt = 11 * 1024 * 1024
 
     # Postgres: either one DATABASE_URL (Neon, as copied from its dashboard) or the POSTGRES_*

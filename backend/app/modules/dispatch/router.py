@@ -3,6 +3,7 @@
 from datetime import date, datetime, time
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import CurrentUser, DbSession, require_roles
 from app.modules.common import not_found, one, rows, scalar
 from app.modules.dispatch.engine import propose, what_if
+from app.modules.lateness import scorer
 
 router = APIRouter(prefix="/dispatch", tags=["Dispatcher"])
 Dispatcher = Annotated[CurrentUser, Depends(require_roles("dispatcher"))]
@@ -226,6 +228,8 @@ async def plan_view(plan_id: int, user: Dispatcher, db: DbSession):
             FROM vehicle v JOIN vehicle_class c USING (class_id) WHERE v.depot_id = :d ORDER BY v.vehicle_id""",
             {"p": plan_id, "d": plan["depot_id"]}),
         "reasons": await rows(db, "SELECT code, label, needs_note FROM reason_code WHERE scope = 'deferral' AND active ORDER BY sort"),
+        # Our Datathon Task 1 model on every stop of the plan (null when no model is installed).
+        "lateness": await scorer.predict_plans(db, [plan_id]),
     }
 
 
@@ -334,6 +338,7 @@ async def release(plan_id: int, user: Dispatcher, db: DbSession):
     await _plan(db, plan_id, user)
     deferred = await scalar(db, "SELECT confirm_deferrals(:p, :u)", {"p": plan_id, "u": user.user_id})
     version = await scalar(db, "SELECT release_plan(:p, :u)", {"p": plan_id, "u": user.user_id})
+    await scorer.record(db, plan_id)  # what the model expects, kept before any vehicle leaves
     await db.commit()
     return {"version": version, "deferred": deferred}
 
@@ -374,7 +379,7 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
                       ELSE rp.service_date - DATE '2000-01-01' END""", {"deps": chosen})
     run_ids = [r["run_id"] for r in runs]
     route_scope = "SELECT r.route_id FROM route r JOIN plan p ON p.plan_id = r.plan_id WHERE p.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb)))"
-    return {
+    board = {
         "depots": await rows(db, "SELECT depot_id, name FROM depot WHERE depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) ORDER BY name", {"deps": visible}),
         "runs": runs,
         "fleet": await rows(db, f"""
@@ -409,8 +414,35 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
             WHERE s.removed_at IS NULL AND s.route_id IN ({route_scope})
             ORDER BY s.route_id, s.seq""", {"runs": run_ids}),
         "closeout": await closeout(db, run_ids),
+        # The lateness model, replayed from where each van really is; alerts where today's delays raised a stop's
+        # chance of missing its window since the plan was sent.
+        "lateness": await scorer.watch(db, [r["plan_id"] for r in await rows(db, """
+            SELECT plan_id FROM plan WHERE run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb)))""",
+            {"runs": run_ids})]),
         "server_time": await scalar(db, "SELECT app_now()"),  # the demo clock, when it runs
     }
+    if board["lateness"]:
+        board["exceptions"] = sorted(board["exceptions"] + [late_exception(a) for a in board["lateness"]["alerts"].values()],
+                                     key=lambda e: (e["urgency"], str(e["since"])))
+    return board
+
+
+def late_exception(a: dict) -> dict:
+    """A lateness alert as a Needs attention row. The store's answer sets how urgent it is: can't receive late is
+    critical, will receive later eases it."""
+    reply = a["reply"]
+    answer = reply["answer"] if reply else None
+    closes = a["window_closes"][11:16] if a["window_closes"] else "its window"
+    detail = f"{a['outlet_name']}: likely after {closes} · expected about {a['expected_arrival'][11:16]}"
+    if answer == "will_receive":
+        detail += f" · store will receive until {reply['receive_until'].astimezone(ZoneInfo('Asia/Colombo')):%H:%M}"
+    elif answer == "cannot_receive":
+        detail += " · store can't receive late"
+    return {"kind": "likely_late", "urgency": 2 if answer == "cannot_receive" else 8 if answer == "will_receive" else 5,
+            "severity": "crit" if answer == "cannot_receive" else "info" if answer == "will_receive" else "warn",
+            "run_id": a["run_id"], "route_id": a["route_id"], "stop_id": a["stop_id"], "order_id": None, "flag_id": None,
+            "since": a["expected_arrival"], "detail": detail, "depot": a["depot"],
+            "late_probability": a["late_probability"], "was": a["was"], "why": a["why"], "reply": reply}
 
 
 async def closeout(db, run_ids: list[int]) -> list[dict]:

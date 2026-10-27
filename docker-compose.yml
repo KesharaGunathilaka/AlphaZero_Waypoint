@@ -47,6 +47,11 @@ services:
       CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
       CLERK_ISSUER: ${CLERK_ISSUER:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      # Our Datathon Task 1 model (predicted lateness), installed into backend/models/task1 by
+      # backend/scripts/install_lateness_model.py. Not in the repository; without it the plan shows no predictions.
+      LATENESS_MODEL_DIR: /models/task1
+    volumes:
+      - ./backend/models/task1:/models/task1:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

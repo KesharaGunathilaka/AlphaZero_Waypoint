@@ -289,6 +289,22 @@ with TestClient(app) as c:
                                                   "label": "x" * 500, "events": []})
     check("F", "Over-long device labels are refused", r.status_code == 422, f"{r.status_code}")
 
+    # ------------------------------------------------------------------ Part G: the late notice and its answer
+    print("\nPART G - the store's answer to a late notice, and the trip the lateness model reads")
+    sm77, sm78 = (app_sql("SELECT user_id FROM wp.app_user WHERE email = $1", e)[0]["user_id"]
+                  for e in ("store.out077@example.com", "store.out078@example.com"))
+    r = c.post(f"/api/v1/store/orders/{order_id}/receiving", headers=SM_OTHER, json={"answer": "cannot_receive"})
+    check("G", "A store cannot answer for another store's delivery", r.status_code in (403, 409), f"{r.status_code} {r.text[:80]}")
+    r = c.post(f"/api/v1/store/orders/{order_id}/receiving", headers=SM, json={"answer": "cannot_receive"})
+    check("G", "Nor answer for a delivery that has already arrived", r.status_code == 409, f"{r.status_code} {r.text[:80]}")
+    n = app_sql("SELECT count(*) AS n FROM wp.model_route_rows(ARRAY[$1]::integer[], '{}')", rt["route_id"], user_id=sm78)[0]["n"]
+    check("G", "The lateness model's trip rows stay hidden from a store with no order on the trip", n == 0, f"{n} rows")
+    n = app_sql("SELECT count(*) AS n FROM wp.model_route_rows('{}', ARRAY[$1]::bigint[])", order_id, user_id=sm78)[0]["n"]
+    check("G", "Naming another store's order does not reveal its trip", n == 0, f"{n} rows")
+    err = refused("""INSERT INTO wp.receiving_reply (order_id, stop_id, answer, replied_by)
+                     VALUES ($1, $2, 'cannot_receive', $3)""", order_id, stop["stop_id"], sm77, user_id=sm77)
+    check("G", "Answers are written only through the checked function", bool(err), err or "insert ran")
+
 failed = [r for r in results if not r[2]]
 print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
 for part, name, _, detail in failed:

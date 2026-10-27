@@ -1,5 +1,6 @@
 """Store manager: place an order before the cutoff, follow it, confirm receipt, report issues."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import CurrentUser, DbSession, require_roles
 from app.modules.common import not_found, one, rows, scalar
+from app.modules.lateness import scorer
 
 router = APIRouter(prefix="/store", tags=["Store manager"])
 StoreUser = Annotated[CurrentUser, Depends(require_roles("store_manager"))]
@@ -33,6 +35,11 @@ class IssueIn(BaseModel):
 
 class ReceiptIn(BaseModel):
     issues: list[IssueIn] = Field(default_factory=list, max_length=300)
+
+
+class ReceivingIn(BaseModel):
+    answer: Literal["will_receive", "cannot_receive"]
+    receive_until: datetime | None = None
 
 
 def _outlet(user: CurrentUser) -> int:
@@ -129,7 +136,26 @@ async def my_orders(user: StoreUser, db: DbSession):
     for o in orders:
         o["progress"] = (await one(db, "SELECT * FROM delivery_progress(:o)", {"o": o["order_id"]})
                          if o["status"] in ("planned", "loading", "loaded", "on_the_way") else None)
+    # On the road: the lateness model's expected arrival, and a notice when it is likely after the window.
+    moving = [o["order_id"] for o in orders if o["progress"] and o["progress"]["route_state"] in ("loaded", "on_the_way")]
+    found = await scorer.notices(db, moving)
+    for o in orders:
+        if o["progress"]:
+            o["progress"]["forecast"] = found.get(o["order_id"])
     return orders
+
+
+@router.post("/orders/{order_id}/receiving", status_code=201)
+async def answer_late_notice(order_id: int, body: ReceivingIn, user: StoreUser, db: DbSession):
+    """The store's answer to "likely after your window": it will receive until a later time today, or it can't.
+    Kept with this delivery and shown to the dispatcher; the outlet's own window does not change."""
+    notice = (await scorer.notices(db, [order_id])).get(order_id)
+    reply_id = await scalar(db, "SELECT reply_receiving(:o, :u, :a, :t, :e, :p)",
+                            {"o": order_id, "u": user.user_id, "a": body.answer, "t": body.receive_until,
+                             "e": datetime.fromisoformat(notice["expected_arrival"]) if notice else None,
+                             "p": notice["late_probability"] if notice else None})
+    await db.commit()
+    return {"reply_id": reply_id}
 
 
 @router.get("/orders/{order_id}")
