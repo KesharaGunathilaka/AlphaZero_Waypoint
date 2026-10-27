@@ -1,8 +1,10 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Chip } from "@/components/waypoint/controls";
 import { StatusPill, type Tone } from "@/components/waypoint/status";
 import { useApiData } from "@/lib/api/use-api";
+import { appToday } from "@/lib/clock";
 import { formatDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND_NAME, type BrandCode, type Capacity as CapacityData } from "./data";
@@ -27,10 +29,20 @@ function verdict(need: number, inService: number): [Tone, string] {
  */
 export function Capacity() {
   const cap = useApiData<CapacityData>("/dispatch/capacity");
+  const [picked, setPicked] = useState<string | null>(null);
   if (!cap.data) {
     return <Page><div className="text-wp-text-2">{cap.error ?? "Loading the forecast…"}</div></Page>;
   }
-  const { forecast, fleet, recent } = cap.data;
+  const { fleet, recent } = cap.data;
+  // One forecast per source: our scored submission (the competition's weeks) and, when loaded, the same models
+  // run on the weeks after today. The upcoming one opens first.
+  const sources = [...new Set(cap.data.forecast.map((f) => f.source))].map((src) => {
+    const starts = cap.data!.forecast.filter((f) => f.source === src).map((f) => f.week_start).sort();
+    return { src, first: starts[0], last: starts[starts.length - 1] };
+  }).sort((a, b) => b.first.localeCompare(a.first));
+  const today = appToday();
+  const chosen = sources.find((x) => x.src === picked) ?? sources.find((x) => x.last >= today) ?? sources[0];
+  const forecast = chosen ? cap.data.forecast.filter((f) => f.source === chosen.src) : [];
   const active = fleet.filter((v) => v.active);
   const roundM3 = active.reduce((a, v) => a + v.m3, 0);
   const reeferM3 = active.filter((v) => v.carries_chilled).reduce((a, v) => a + v.m3, 0);
@@ -69,6 +81,15 @@ export function Capacity() {
   return (
     <Page>
       <Header source={source} first={weeks[0]} last={weeks[weeks.length - 1]} />
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-wp-border bg-wp-surface px-3 py-2">
+        <span className={label}>Forecast weeks</span>
+        {sources.map((x) => (
+          <Chip key={x.src} active={x.src === chosen?.src} onClick={() => setPicked(x.src)}>
+            {x.last < today ? "Competition weeks" : "Next 10 weeks"} · {formatDay(x.first)} to {formatDay(x.last)}
+          </Chip>
+        ))}
+        <span className="basis-full text-[12px] text-wp-text-2">{aboutSource(source, today)}</span>
+      </div>
 
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <Tile name="Fleet in service" value={`${active.length} vehicles`} note={`${Math.round(roundM3)} m³ one round · ${Math.round(reeferM3)} m³ refrigerated${workshop.length ? ` · ${workshop.join(", ")} in the workshop` : ""}`} />
@@ -139,6 +160,14 @@ export function Capacity() {
 
 const ROW = "md:grid-cols-[140px_minmax(0,1fr)_130px_150px_220px] md:items-center md:gap-3";
 
+/** What a forecast is, in a line: the dispatcher should never take past weeks for the coming ones. */
+function aboutSource(source: string, today: string): string {
+  if (source.includes("extended calendar")) {
+    return `Our saved Datathon Task 2A model, unchanged, run on the weeks after today. The competition calendar ends on 28 June 2026, so this one is extended with its own rules (Sundays off, paydays on the 25th and the month's last day, the monsoon months, a 9-day build-up before each festival); the festival dates are ours: Deepavali 8 Nov, Christmas 25 Dec, Thai Pongal 15 Jan.`;
+  }
+  return `Our scored Datathon submission: the competition's forecast weeks${today > "2026-06-07" ? ", which are before today's date" : ""}. Shown for its accuracy (2.1% error on chilled volume in backtests).`;
+}
+
 /** "new_year" -> "New year" */
 const festivalName = (f: string) => f.split(", ").map((x) => x.charAt(0).toUpperCase() + x.slice(1).replaceAll("_", " ")).join(", ");
 
@@ -148,7 +177,7 @@ function Header({ source, first, last }: { source?: string; first?: { week: numb
       <h1 className="text-[22px] leading-7 font-bold">Plan future capacity</h1>
       <div className="text-[12px] text-wp-text-2">
         {source && first && last
-          ? `Demand forecast ${first.year} W${first.week}–W${last.week} against the fleet in service today`
+          ? `Demand forecast ${first.year} W${first.week}–${last.year !== first.year ? `${last.year} ` : ""}W${last.week} against the fleet in service today`
           : "Demand forecast against the fleet"}
       </div>
     </div>
