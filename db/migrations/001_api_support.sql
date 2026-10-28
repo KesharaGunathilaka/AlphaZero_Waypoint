@@ -108,28 +108,38 @@ BEGIN
 
   -- Accounts. Emails are the sign-in names (Clerk links them by email on first sign-in).
   -- Local sign-in (Docker): every demo account's password is 'waypoint-demo' (bcrypt hash).
+  -- A vehicle has one driver: an older account on a demo vehicle (a test driver, say) steps aside.
+  UPDATE wp.app_user SET vehicle_id = NULL, active = false
+  WHERE vehicle_id IN (SELECT vehicle_id FROM wp.vehicle WHERE source_id IN ('VEH001', 'VEH057', 'VEH059', 'VEH060'))
+    AND email NOT IN ('driver.veh001@example.com', 'driver.veh057@example.com', 'driver.veh059@example.com',
+                      'driver.veh060@example.com');
   INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id, password_hash, all_depots)
   SELECT v.role::wp.user_role, v.name, v.email,
-         CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL ELSE (SELECT depot_id FROM wp.depot WHERE name = 'Kandy') END,
+         CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL
+              ELSE (SELECT depot_id FROM wp.depot WHERE name = COALESCE(v.depot, 'Kandy')) END,
          (SELECT outlet_id FROM wp.outlet WHERE code = v.outlet),
          (SELECT vehicle_id FROM wp.vehicle WHERE source_id = v.vehicle),
          public.crypt('waypoint-demo', public.gen_salt('bf', 8)),
          v.role = 'dispatcher'   -- the planning-office dispatcher plans both depots (starts on Kandy)
   FROM (VALUES
-    ('dispatcher',    'Ruwan Perera',      'dispatcher@example.com',     NULL,     NULL),
-    ('loader',        'Kasun Jayasinghe',  'loader.kandy@example.com',   NULL,     NULL),
-    ('driver',        'Nuwan Bandara',     'driver.veh057@example.com',  NULL,     'VEH057'),
-    ('driver',        'Saman Kumara',      'driver.veh059@example.com',  NULL,     'VEH059'),
-    ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060'),
-    ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL),
-    ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL),
+    ('dispatcher',    'Ruwan Perera',      'dispatcher@example.com',     NULL,     NULL,     NULL),
+    ('loader',        'Kasun Jayasinghe',  'loader.kandy@example.com',   NULL,     NULL,     NULL),
+    ('driver',        'Nuwan Bandara',     'driver.veh057@example.com',  NULL,     'VEH057', NULL),
+    ('driver',        'Saman Kumara',      'driver.veh059@example.com',  NULL,     'VEH059', NULL),
+    ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060', NULL),
+    ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL,     NULL),
+    ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL,     NULL),
+    -- Peliyagoda runs its own delivery day too: a loader, a refrigerated-truck driver and a Fresh store on his trip.
+    ('loader',        'Tharaka Gunawardena', 'loader.peliyagoda@example.com', NULL, NULL,  'Peliyagoda'),
+    ('driver',        'Roshan Fernando',   'driver.veh001@example.com',  NULL,     'VEH001', 'Peliyagoda'),
+    ('store_manager', 'Sanduni Herath',    'store.out007@example.com',   'OUT007', NULL,     NULL),     -- Fresh, Colombo: VEH001's first stop
     -- Outlets the demo day leaves without an order, so each category can be ordered live:
-    ('store_manager', 'Ishara Wijesinghe', 'store.out102@example.com',   'OUT102', NULL),   -- Style, Matale (Kandy)
-    ('store_manager', 'Chamara Dissanayake', 'store.out103@example.com', 'OUT103', NULL),   -- Tech, Matale (Kandy)
-    ('store_manager', 'Nadeesha Perera',   'store.out018@example.com',   'OUT018', NULL),   -- Style, Colombo mall (Peliyagoda)
-    ('store_manager', 'Ravindu Silva',     'store.out022@example.com',   'OUT022', NULL),   -- Tech, Colombo mall (Peliyagoda)
-    ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL)
-  ) AS v(role, name, email, outlet, vehicle)
+    ('store_manager', 'Ishara Wijesinghe', 'store.out102@example.com',   'OUT102', NULL,     NULL),   -- Style, Matale (Kandy)
+    ('store_manager', 'Chamara Dissanayake', 'store.out103@example.com', 'OUT103', NULL,     NULL),   -- Tech, Matale (Kandy)
+    ('store_manager', 'Nadeesha Perera',   'store.out018@example.com',   'OUT018', NULL,     NULL),   -- Style, Colombo mall (Peliyagoda)
+    ('store_manager', 'Ravindu Silva',     'store.out022@example.com',   'OUT022', NULL,     NULL),   -- Tech, Colombo mall (Peliyagoda)
+    ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL,     NULL)
+  ) AS v(role, name, email, outlet, vehicle, depot)
   ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = EXCLUDED.name, depot_id = EXCLUDED.depot_id,
     outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true, all_depots = EXCLUDED.all_depots,
     password_hash = COALESCE(wp.app_user.password_hash, EXCLUDED.password_hash);
