@@ -66,6 +66,17 @@ WHERE x.n > 0 AND l.state = 'on_the_way'
   AND NOT EXISTS (SELECT 1 FROM flag f WHERE f.route_id = l.route_id AND f.source = 'loader' AND f.state = 'open')
   AND NOT EXISTS (SELECT 1 FROM instruction i WHERE i.route_id = l.route_id AND i.type IN ('proceed_short', 'hold'))
 UNION ALL
+-- A trip of a sent plan still at the depot after its departure time (past the grace), loaded or not.
+SELECT 'not_left', 3, 'warn', p.run_id, r.route_id, NULL, NULL, NULL, r.depart_at,
+       ve.code || ' hasn''t left: due ' || to_char(r.depart_at AT TIME ZONE 'Asia/Colombo', 'HH24:MI') || ', '
+       || CASE r.state WHEN 'planned' THEN 'loading not started' WHEN 'loading' THEN 'still loading'
+                       ELSE 'loaded, the driver hasn''t started' END
+FROM route r JOIN plan p ON p.plan_id = r.plan_id JOIN vehicle ve ON ve.vehicle_id = r.vehicle_id
+WHERE p.state = 'released' AND r.state IN ('planned', 'loading', 'loaded') AND r.departed_at IS NULL
+  AND r.depart_at + make_interval(mins => setting_int('late_grace_minutes')) < wp.app_now()
+  AND (wp.app_now() AT TIME ZONE 'Asia/Colombo')::date = p.service_date
+  AND can_see_route(r.route_id)
+UNION ALL
 SELECT 'no_signal', 4, 'warn', (SELECT p.run_id FROM plan p WHERE p.plan_id = l.plan_id), l.route_id, NULL, NULL, NULL,
        dev.last_seen_at,
        l.vehicle_code || ' silent since ' || to_char(dev.last_seen_at AT TIME ZONE 'Asia/Colombo', 'HH24:MI')

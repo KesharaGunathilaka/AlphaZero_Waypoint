@@ -278,6 +278,7 @@ export const EXCEPTION_LABEL: Record<string, string> = {
   delivery_failed: "Delivery failed",
   driver_reported: "Driver reported",
   short_loaded: "Short-loaded",
+  not_left: "Hasn't left",
   no_signal: "No signal",
   late: "Late",
   likely_late: "Likely to miss window",

@@ -137,7 +137,7 @@ async def my_orders(user: StoreUser, db: DbSession):
         o["progress"] = (await one(db, "SELECT * FROM delivery_progress(:o)", {"o": o["order_id"]})
                          if o["status"] in ("planned", "loading", "loaded", "on_the_way") else None)
     # On the road: the lateness model's expected arrival, and a notice when it is likely after the window.
-    moving = [o["order_id"] for o in orders if o["progress"] and o["progress"]["route_state"] in ("loaded", "on_the_way")]
+    moving = [o["order_id"] for o in orders if o["progress"] and o["progress"]["route_state"] in ("planned", "loading", "loaded", "on_the_way")]
     found = await scorer.notices(db, moving)
     for o in orders:
         if o["progress"]:

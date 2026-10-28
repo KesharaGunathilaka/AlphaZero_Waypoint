@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import { BRAND_NAME, exceptionTone, type FleetRow, type Monitor, type RunProgress } from "./data";
 import { LaneTimeline, type Lane, type LaneBar } from "./lane-timeline";
 import { ModelNote } from "./late-risk";
-import { AttentionRow, MovedToday, TripStops, aheadRisk, dots, vehicleStatus, type LiveActions } from "./live-monitor";
+import { AttentionList, MovedToday, TripStops, aheadRisk, dots, vehicleStatus, type LiveActions } from "./live-monitor";
 
 /**
  * Where a trip is, for the charts: one bucket each, worst first. Red is kept for a critical problem (a failed
@@ -92,11 +92,7 @@ export function LiveOverview({ m, actions, showDepot, onView }: {
         <Panel title={`Needs attention · ${m.exceptions.length}`} action={<Button variant="link" onClick={() => onView("trips")}>All trips</Button>}
                className="max-h-[480px] lg:max-h-none">
           <MovedToday actions={actions} />
-          {m.exceptions.length === 0 && <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>}
-          {m.exceptions.map((e, i) => (
-            <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
-                          showDepot={showDepot} compact onOpen={e.route_id ? () => openTrip(e.route_id!) : undefined} />
-          ))}
+          <AttentionList exceptions={m.exceptions} actions={actions} showDepot={showDepot} compact onOpen={openTrip} />
         </Panel>
       </div>
 

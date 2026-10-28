@@ -302,6 +302,45 @@ export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }:
   );
 }
 
+/**
+ * Needs attention, in the server's order (critical, warning, information; oldest first). Alerts of one kind and
+ * severity stay together where the oldest of them falls; a group of more than four shows its three oldest and
+ * opens on request, so twenty vans that haven't left don't bury a driver's report.
+ */
+export function AttentionList({ exceptions, actions, showDepot, compact = false, onOpen }: {
+  exceptions: Exception[]; actions: LiveActions; showDepot: boolean; compact?: boolean; onOpen: (routeId: number) => void;
+}) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const groups: { key: string; list: Exception[] }[] = [];
+  for (const e of exceptions) {
+    const key = `${exceptionTone(e)}-${e.kind}`;
+    const group = groups.find((g) => g.key === key);
+    if (group) group.list.push(e);
+    else groups.push({ key, list: [e] });
+  }
+  if (exceptions.length === 0) return <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>;
+  return (
+    <>
+      {groups.map((g) => {
+        const folded = g.list.length > 4 && !open[g.key];
+        return (
+          <div key={g.key} className="border-t border-wp-border first:border-t-0">
+            {(folded ? g.list.slice(0, 3) : g.list).map((e, i) => (
+              <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
+                            showDepot={showDepot} compact={compact} onOpen={e.route_id ? () => onOpen(e.route_id!) : undefined} />
+            ))}
+            {g.list.length > 4 && (
+              <Button variant="link" className="mb-2 h-7 min-h-7 px-0" onClick={() => setOpen((o) => ({ ...o, [g.key]: !o[g.key] }))}>
+                {folded ? `Show ${g.list.length - 3} more · ${EXCEPTION_LABEL[g.list[0].kind] ?? g.list[0].kind}` : "Show fewer"}
+              </Button>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function MovedToday({ actions }: { actions: LiveActions }) {
   return (
     <>
@@ -336,11 +375,7 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
       <section className="flex flex-col rounded-lg border border-wp-border bg-wp-surface p-4">
         <h2 className="mb-1 text-[15px] leading-5 font-semibold">Needs attention{showDepot ? " · both depots" : ""}</h2>
         <MovedToday actions={actions} />
-        {m.exceptions.length === 0 && <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>}
-        {m.exceptions.map((e, i) => (
-          <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
-                        showDepot={showDepot} onOpen={e.route_id ? () => setSelected(e.route_id) : undefined} />
-        ))}
+        <AttentionList exceptions={m.exceptions} actions={actions} showDepot={showDepot} onOpen={setSelected} />
       </section>
       <div className={cn("grid items-start gap-4", chosen && "xl:grid-cols-[minmax(0,1fr)_460px]")}>
         <section className="flex flex-col gap-1 overflow-x-auto rounded-lg border border-wp-border bg-wp-surface p-4">

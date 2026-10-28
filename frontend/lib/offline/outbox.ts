@@ -196,7 +196,7 @@ async function flush(getToken: GetToken, label: string) {
         });
       }
     }
-    set(label, { lastSyncAt: new Date().toISOString() });
+    set(label, { lastSyncAt: appNow().toISOString() });
   } catch (e) {
     set(label, { lastError: e instanceof Error ? e.message : "Sync failed" });
   } finally {

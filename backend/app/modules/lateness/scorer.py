@@ -111,7 +111,7 @@ def _model_rows(raw: list[dict], cal_info: dict, kg_per_unit: dict, now: dict | 
             today = now is not None and now["date"] == day
             if r["departed_min"] is not None:
                 start_delay = r["departed_min"] - r["depart_min"]
-            elif today and r["route_state"] == "loaded" and now["min"] > r["depart_min"]:
+            elif today and r["route_state"] in AT_DEPOT and now["min"] > r["depart_min"]:
                 start_delay = now["min"] - r["depart_min"]  # still at the depot, already this late
             else:
                 start_delay = np.nan
@@ -239,6 +239,10 @@ async def predict_plans(db: AsyncSession, plan_ids: list[int]) -> dict | None:
     return result
 
 
+# A trip still at the depot past its departure time is late leaving, whether or not it has been loaded.
+AT_DEPOT = ("planned", "loading", "loaded")
+
+
 async def watch(db: AsyncSession, plan_ids: list[int] | None = None, orders: list[int] | None = None) -> dict | None:
     """Live: every stop scored again from where its van really is, and an alert where the chance of missing the
     window has risen since the plan was sent (JUMP or more, to LIKELY or more), for a stop not reached yet on a
@@ -271,7 +275,7 @@ async def watch(db: AsyncSession, plan_ids: list[int] | None = None, orders: lis
         r = first[sid]
         today = now["date"] == r["service_date"]
         watched = today and (r["route_state"] == "on_the_way"
-                             or (r["route_state"] == "loaded" and r["departed_min"] is None and now["min"] > r["depart_min"]))
+                             or (r["route_state"] in AT_DEPOT and r["departed_min"] is None and now["min"] > r["depart_min"]))
         rose = f["late_probability"] - base[sid]
         alert = watched and r["arrived_min"] is None and f["late_probability"] >= LIKELY and rose >= JUMP
         result["stops"][str(sid)] = {**f, "level": "likely" if alert else "ok", "was": round(base[sid], 4)}
