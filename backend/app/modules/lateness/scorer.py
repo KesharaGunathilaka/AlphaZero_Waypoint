@@ -132,6 +132,7 @@ def _model_rows(raw: list[dict], cal_info: dict, kg_per_unit: dict, now: dict | 
                 "distance_km": dist, "planned_depart_min": depart, "planned_travel_duration_min": travel,
                 "planned_arrival_min": arrival, "window_open_min": _num(r["opens_min"]), "window_close_min": _num(r["closes_min"]),
                 "start_delay": start_delay,
+                "still_at_depot": r["departed_min"] is None,
                 "live_arrival_min": _num(r["arrived_min"]),
                 "live_leave_min": _num(prev["done_min"]) if prev and prev["stop_id"] != r["stop_id"] else np.nan,
                 "live_not_before_min": float(now["min"]) if moving else np.nan,
@@ -160,7 +161,8 @@ def _stops(d: pd.DataFrame, typical_road: set) -> dict[int, dict]:
                    else f"expected {round(slack)} min before the window closes")
         delay = float(first["start_delay"])
         if not np.isnan(delay) and delay >= 15:
-            why.append(f"the van left {round(delay)} min late")
+            why.append(f"the van hasn't left yet, {round(delay)} min after its departure time" if first["still_at_depot"]
+                       else f"the van left {round(delay)} min late")
         if worst["disruption_index"] < 85:
             typical = (worst["district"], worst["date_str"]) in typical_road
             why.append(f"roads in {worst['district']} at {int(worst['disruption_index'])}/100"

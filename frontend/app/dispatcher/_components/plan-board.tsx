@@ -6,7 +6,7 @@ import { Button, Chip } from "@/components/waypoint/controls";
 import { BrandMonogram } from "@/components/waypoint/data";
 import { StatusPill } from "@/components/waypoint/status";
 import { TimeWindow } from "@/components/waypoint/time-window";
-import { useApiData } from "@/lib/api/use-api";
+import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND, BRAND_NAME, quickBlock, type BrandCode, type PlanView, type Route, type Run, type Vehicle, type WhatIf } from "./data";
@@ -490,6 +490,40 @@ function MoveDialog({
   }
   options.sort((a, b) => Number(b.ok) - Number(a.ok) || b.free - a.free);
 
+  // What the browser can't see (delivery windows, time budgets, fuel): the server tries each remaining choice
+  // without keeping it, one at a time, and a choice that would break a rule is shown with that rule.
+  const request = useApi();
+  const [checks, setChecks] = useState<Record<string, string | null>>({});
+  const names = new Map(plan.vehicles.map((v) => [v.code, v.source_id]));
+  const candidates = options.filter((o) => o.ok).map((o) => `${o.vehicle.vehicle_id}-${o.seq}`).join(",");
+  useEffect(() => {
+    let stop = false;
+    void (async () => {
+      for (const key of candidates ? candidates.split(",") : []) {
+        if (stop) return;
+        const [vehicleId, seq] = key.split("-").map(Number);
+        try {
+          const r = await request<{ violations: { code: string; message: string }[] }>(`/dispatch/plans/${plan.plan.plan_id}/move`, {
+            method: "POST", body: { order_id: moving.order_id, vehicle_id: vehicleId, seq, check_only: true } });
+          const broken = r.violations.filter((v) => v.code !== "unplanned"
+            && !plan.violations.some((p) => p.code === v.code && p.message === v.message));
+          if (!stop) setChecks((c) => ({ ...c, [key]: broken.length ? broken[0].message.replace(/\b[A-Z]{2}-\d{2}\b/g, (x) => names.get(x) ?? x) : null }));
+        } catch (err) {
+          if (!stop) setChecks((c) => ({ ...c, [key]: errorMessage(err) }));
+        }
+      }
+    })();
+    return () => { stop = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-check only when the choices themselves change
+  }, [candidates, plan.plan.plan_id, moving.order_id]);
+  const checked = options.map((o) => {
+    const key = `${o.vehicle.vehicle_id}-${o.seq}`;
+    if (!o.ok) return { ...o, checking: false };
+    if (!(key in checks)) return { ...o, ok: false, checking: true };
+    const why = checks[key]?.replace(`${o.vehicle.source_id}: `, "");
+    return checks[key] === null ? { ...o, checking: false } : { ...o, ok: false, checking: false, text: `${o.text} · ${why}` };
+  }).sort((a, b) => Number(b.ok) - Number(a.ok) || Number(b.checking) - Number(a.checking) || b.free - a.free);
+
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="move-title" className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
          onClick={onClose}>
@@ -505,7 +539,7 @@ function MoveDialog({
           <button type="button" onClick={onClose} aria-label="Close" className="cursor-pointer rounded p-1 hover:bg-wp-surface-2"><X className="size-4" /></button>
         </div>
         {error && <div role="alert" className="mx-4 mt-3 rounded-md bg-wp-crit-tint px-3 py-2 text-wp-crit">{error}</div>}
-        {!options.some((o) => o.ok) && (
+        {!checked.some((o) => o.ok || o.checking) && (
           <div className="mx-4 mt-3 rounded-md bg-wp-warn-tint px-3 py-2 font-semibold text-wp-warn">
             ▲ No vehicle in service can take it today without breaking a rule.
           </div>
@@ -516,7 +550,7 @@ function MoveDialog({
                                     setError(await onBringBack(id));
                                   }} />}
         <ul className="flex-1 overflow-y-auto p-2">
-          {options.map((o) => (
+          {checked.map((o) => (
             <li key={`${o.vehicle.vehicle_id}-${o.seq}`}>
               <button type="button" disabled={!o.ok || busy}
                       onClick={async () => setError(await onMove(o.vehicle.vehicle_id, o.seq))}
@@ -528,6 +562,7 @@ function MoveDialog({
                   <span className="block text-[11px] text-wp-muted">{o.vehicle.class}</span>
                 </span>
                 {o.ok && <span className="text-[12px] font-semibold text-wp-focus">Choose</span>}
+                {o.checking && <span className="text-[12px] text-wp-muted">Checking…</span>}
               </button>
             </li>
           ))}
@@ -542,7 +577,7 @@ function MoveDialog({
           ))}
         </ul>
         <div className="border-t border-wp-border p-3 text-[11px] text-wp-muted">
-          The server re-checks every rule (time budgets, windows, fuel) and refuses the move with the reason if one breaks.
+          Every choice is first tried on the server against all the rules (windows, time budgets, fuel); one that would break a rule shows which.
         </div>
       </div>
     </div>

@@ -18,8 +18,10 @@ export type LaneBar = {
   fill?: number;
   dim?: boolean;
   selected?: boolean;
-  /** Predicted lateness on the trip: a red (likely late) or amber (at risk) marker at its end. */
+  /** Predicted lateness on the trip: an amber dot at its end, filled (likely late) or outlined (at risk). */
   risk?: "likely" | "risk";
+  /** Stops not delivered on this trip: a red ✕ with the count. */
+  failed?: number;
   onClick: () => void;
 };
 export type Lane = { key: string; label: string; bars: LaneBar[] };
@@ -40,26 +42,33 @@ export function LaneTimeline({ lanes, now, compact = false }: { lanes: Lane[]; n
   const ticks: number[] = [];
   for (let t = Math.ceil((start - HOUR / 2) / HOUR) * HOUR + HOUR / 2; t <= end; t += HOUR) ticks.push(t);
   const showNow = now !== undefined && now >= start && now <= end;
+  // The present: the time itself in the hour scale (hour labels it would cover step aside), the past lightly
+  // shaded, and a thin dashed line in the text colour. Never red: on Live, red means a failed delivery.
+  const nowX = showNow ? x(now!) : null;
+  const clear = (t: number) => nowX === null || Math.abs(x(t) - nowX) > 7;
 
   return (
     <div className="flex min-h-0 flex-col">
       <div className="flex shrink-0 pl-[74px]">
         <div className="relative h-4 flex-1 text-[10px] text-wp-muted">
-          {ticks.map((t, i) => (
+          {ticks.map((t, i) => clear(t) && (
             <span key={t} className={cn("absolute -translate-x-1/2", i % 2 === 1 && "max-sm:hidden")} style={{ left: `${x(t)}%` }}>
               {formatTime(new Date(t))}
             </span>
           ))}
+          {nowX !== null && (
+            <span className="absolute top-0 z-10 -translate-x-1/2 rounded bg-wp-text px-1 text-[10px] leading-4 font-bold text-wp-surface tabular-nums"
+                  style={{ left: `${nowX}%` }} aria-label={`Now ${formatTime(new Date(now!))}`}>
+              {formatTime(new Date(now!))}
+            </span>
+          )}
         </div>
       </div>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="pointer-events-none absolute inset-y-0 right-0 left-[74px]">
+          {nowX !== null && <div className="absolute inset-y-0 left-0 bg-wp-surface-2/70" style={{ width: `${nowX}%` }} />}
           {ticks.map((t) => <div key={t} className="absolute inset-y-0 border-l border-wp-border/60" style={{ left: `${x(t)}%` }} />)}
-          {showNow && (
-            <div className="absolute inset-y-0 z-10 border-l-2 border-wp-crit" style={{ left: `${x(now!)}%` }}>
-              <span className="absolute -top-0.5 -translate-x-1/2 rounded bg-wp-crit px-1 text-[9px] font-bold text-white">NOW</span>
-            </div>
-          )}
+          {nowX !== null && <div className="absolute inset-y-0 z-10 border-l-[1.5px] border-dashed border-wp-text/70" style={{ left: `${nowX}%` }} />}
         </div>
         {lanes.map((lane) => (
           <div key={lane.key}
@@ -77,11 +86,16 @@ export function LaneTimeline({ lanes, now, compact = false }: { lanes: Lane[]; n
                     {b.fill !== undefined && (
                       <div className={cn("absolute inset-y-0 left-0", b.fillClassName)} style={{ width: `${Math.min(1, b.fill) * 100}%` }} />
                     )}
+                    {b.failed ? (
+                      <span className="relative shrink-0 rounded-sm bg-wp-crit px-0.5 text-[9px] leading-3 font-bold text-white" aria-hidden="true">
+                        ✕{b.failed > 1 ? b.failed : ""}
+                      </span>
+                    ) : null}
                     <span className="relative block truncate px-1 text-[10px] leading-none font-semibold">{b.text}</span>
                     {b.risk && (
                       <span aria-hidden="true"
                             className={cn("absolute top-0.5 right-0.5 size-2 rounded-full ring-1 ring-wp-surface",
-                                          b.risk === "likely" ? "bg-wp-crit" : "bg-wp-gauge-amber")} />
+                                          b.risk === "likely" ? "bg-wp-warn" : "border border-wp-warn bg-wp-surface")} />
                     )}
                   </button>
                 );

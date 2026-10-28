@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SpareBadge, minutesText, spareMinutes } from "@/components/waypoint/time-window";
+import { useNow } from "@/lib/clock";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND_CLASS, DISPATCHER, UNLOAD_LABEL, navigationUrl } from "./data";
@@ -46,9 +47,30 @@ function driveMinutes(trip: { depart_at: string; stops: RunStop[] }, stop: RunSt
  * The answer is a single big button at the bottom (Start trip, I'm here, Deliver), the stop it is about
  * is shown in large type above it, and everything else (map, problem, call) is one row of plain buttons.
  */
+/** Messages from dispatch not yet acknowledged: on every screen the driver rests on, not only the run. */
+export function DispatchMessages({ instructions, onSeen }: {
+  instructions: ReturnType<typeof useRun>["instructions"]; onSeen: ReturnType<typeof useRun>["seeInstruction"];
+}) {
+  return (
+    <>
+      {instructions.map((i) => (
+        <div key={i.instruction_id} className="flex flex-col gap-2 rounded-xl border-2 border-wp-info bg-wp-info-tint p-3 text-wp-info">
+          <div className="text-[13px] font-semibold">MESSAGE FROM DISPATCH</div>
+          <div className="text-[18px] leading-6 font-bold">{i.text ?? i.type.replaceAll("_", " ")}</div>
+          <button type="button" onClick={() => onSeen(i)}
+                  className="flex min-h-12 cursor-pointer items-center justify-center rounded-[10px] bg-wp-info font-semibold text-wp-surface">
+            OK, got it
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => void }) {
   const { run, error, currentTrip, currentStop, instructions, seeInstruction, records, isSent, depart, arrive } = useRun();
   const [showDone, setShowDone] = useState(false);
+  const now = useNow();
 
   if (!run) {
     return (
@@ -110,16 +132,7 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
       <RunHeader />
       <Body className="gap-3">
         <OfflineBanner />
-        {instructions.map((i) => (
-          <div key={i.instruction_id} className="flex flex-col gap-2 rounded-xl border-2 border-wp-info bg-wp-info-tint p-3 text-wp-info">
-            <div className="text-[13px] font-semibold">MESSAGE FROM DISPATCH</div>
-            <div className="text-[18px] leading-6 font-bold">{i.text ?? i.type.replaceAll("_", " ")}</div>
-            <button type="button" onClick={() => seeInstruction(i)}
-                    className="flex min-h-12 cursor-pointer items-center justify-center rounded-[10px] bg-wp-info font-semibold text-wp-surface">
-              OK, got it
-            </button>
-          </div>
-        ))}
+        <DispatchMessages instructions={instructions} onSeen={seeInstruction} />
 
         {stop ? (
           <Card className="gap-2">
@@ -143,7 +156,9 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-[14px] text-wp-text-2">
-              <SpareBadge spare={spareMinutes(stop.planned_arrival, stop.closes)} className="text-[13px]" />
+              {/* On the road and already past the planned time: spare counts from now, not from the plan. */}
+              <SpareBadge spare={spareMinutes(currentTrip.departed && now.getTime() > Date.parse(stop.planned_arrival) ? now.toISOString() : stop.planned_arrival,
+                                              stop.closes)} className="text-[13px]" />
               {!stop.arrivedAt && <span>≈ {minutesText(driveMinutes(currentTrip, stop))} drive {stop.seq === 1 ? "from the depot" : "from the last stop"}</span>}
             </div>
             <div className="text-[16px]">

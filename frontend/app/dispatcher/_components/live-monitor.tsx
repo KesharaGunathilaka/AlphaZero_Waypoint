@@ -7,7 +7,8 @@ import { Banner, StatusPill, type Tone } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { EXCEPTION_STYLE, type Closeout, type Exception, type FleetRow, type Lateness, type Monitor, type MonitorStop, type RunProgress } from "./data";
+import { EXCEPTION_LABEL, exceptionTone, worstSeverity, type Closeout, type Exception, type FleetRow, type Lateness, type Monitor,
+         type MonitorStop, type RunProgress } from "./data";
 import { LateRisk, countLevel, forecastOf, percent, worstStop } from "./late-risk";
 import { AlertSoundToggle, useLiveAlerts } from "./live-alerts";
 import { LiveOverview } from "./live-overview";
@@ -17,8 +18,9 @@ const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_76px_96px_70px] gap-2";
 
 /** How a vehicle is doing, worst first. No signal never shows as "on time": we do not know. */
 export function vehicleStatus(f: FleetRow): { state: Tone; label: string; risk: number } {
+  if (f.worst === "crit") return { state: "crit", label: "Problem", risk: -1 };
   if (f.no_signal) return { state: "offline", label: `No signal${f.last_seen_at ? ` since ${formatTime(f.last_seen_at)}` : ""}`, risk: 0 };
-  if (f.exception_count > 0) return { state: "warn", label: "Needs attention", risk: 1 };
+  if (f.worst === "warn" || (f.worst === undefined && f.exception_count > 0)) return { state: "warn", label: "Needs attention", risk: 1 };
   switch (f.state) {
     case "on_the_way": return { state: "good", label: "On the way", risk: 2 };
     case "loaded": return { state: "info", label: "Loaded, not departed", risk: 3 };
@@ -30,6 +32,8 @@ export function vehicleStatus(f: FleetRow): { state: Tone; label: string; risk: 
 }
 
 const RUN_STATE: Record<string, { tone: Tone; label: string }> = {
+  open: { tone: "info", label: "Not planned yet" },
+  closed: { tone: "info", label: "Orders closed, plan not sent" },
   planned: { tone: "info", label: "Plan sent, at the depot" },
   in_progress: { tone: "good", label: "On the road" },
   complete: { tone: "good", label: "Day complete" },
@@ -48,7 +52,8 @@ const VIEWS: [View, string][] = [["overview", "Overview"], ["trips", "Trips"], [
 export type LiveActions = {
   replies: Record<string, string>;
   moved: Record<number, string>;
-  reply: (e: Exception, type: "proceed_short" | "hold", text: string) => Promise<void>;
+  /** Answer a flag; `send: false` marks it handled without sending the driver or loader anything. */
+  reply: (e: Exception, type: "proceed_short" | "hold" | "note", text: string, send?: boolean) => Promise<void>;
   requeue: (orderId: number) => Promise<void>;
   /** Fleet codes in database texts (RV-03) shown as the VEH ids used everywhere else; "Short x2.00" as "2 short". */
   named: (text: string) => string;
@@ -88,7 +93,11 @@ export function LiveMonitor() {
     );
   }
 
-  const m = monitor.data;
+  // Each trip's colour follows its worst alert, so a failed delivery reads red wherever the trip appears.
+  const m: Monitor = {
+    ...monitor.data,
+    fleet: monitor.data.fleet.map((f) => ({ ...f, worst: worstSeverity(monitor.data!.exceptions.filter((e) => e.route_id === f.route_id)) })),
+  };
   const codes = new Map(m.fleet.map((f) => [f.vehicle_code, f.vehicle_source_id]));
   const actions: LiveActions = {
     replies,
@@ -96,13 +105,13 @@ export function LiveMonitor() {
     named: (text) => text
       .replace(/\b[A-Z]{2}-\d{2}\b/g, (code) => codes.get(code) ?? code)
       .replace(/\b(Short|Missing|Damaged) x(\d+(?:\.\d+)?)/g, (_, kind: string, n: string) => `${Number(n)} ${kind.toLowerCase()}`),
-    reply: async (e, type, text) => {
+    reply: async (e, type, text, send = true) => {
       if (!e.flag_id) return;
       const id = e.flag_id;
-      setReplies((r) => ({ ...r, [id]: "Sending…" }));
+      setReplies((r) => ({ ...r, [id]: send ? "Sending…" : "Saving…" }));
       try {
-        await request(`/dispatch/flags/${id}/reply`, { method: "POST", body: { type, text, resolve: true } });
-        setReplies((r) => ({ ...r, [id]: `Sent: “${text}”. It reaches the tablet or phone on its next sync.` }));
+        await request(`/dispatch/flags/${id}/reply`, { method: "POST", body: { type, text, resolve: true, send } });
+        setReplies((r) => ({ ...r, [id]: send ? `Sent: “${text}”. It reaches the tablet or phone on its next sync.` : "Marked handled." }));
         await monitor.reload();
       } catch (err) {
         setReplies((r) => ({ ...r, [id]: errorMessage(err) }));
@@ -192,13 +201,14 @@ export function TripStops({ trip, stops, lateness }: { trip: FleetRow; stops: Mo
       </div>
       {stops.map((s) => {
         const failed = s.outcomes?.includes("not_delivered");
+        const part = !failed && s.outcomes?.includes("delivered_in_part");
         const unknown = !s.delivered_at && trip.no_signal;
         return (
           <div key={s.stop_id}
                className={cn(DETAIL_COLUMNS, "items-center border-t border-wp-border py-2",
                              unknown && "bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,var(--wp-surface-2)_6px,var(--wp-surface-2)_12px)]")}>
             <div className="flex flex-col items-start gap-0.5">
-              <span>{s.delivered_at ? (failed ? "✕" : "●") : "○"} {s.outlet_code}</span>
+              <span>{s.delivered_at ? (failed ? "✕" : part ? "◐" : "●") : "○"} {s.outlet_code}</span>
               {!s.delivered_at && <LateRisk f={forecastOf(lateness, s.stop_id)} />}
             </div>
             <div>
@@ -209,8 +219,9 @@ export function TripStops({ trip, stops, lateness }: { trip: FleetRow; stops: Mo
                 </div>
               )}
             </div>
-            <div className={failed ? "font-semibold text-wp-crit" : unknown ? "text-wp-offline" : "text-wp-text"}>
-              {s.delivered_at ? (failed ? "Not delivered" : formatTime(s.delivered_at)) : unknown ? "Not confirmed" : s.arrived_at ? `Arrived ${formatTime(s.arrived_at)}` : "—"}
+            <div className={failed ? "font-semibold text-wp-crit" : part ? "font-semibold text-wp-warn" : unknown ? "text-wp-offline" : "text-wp-text"}>
+              {s.delivered_at ? (failed ? "Not delivered" : part ? `${formatTime(s.delivered_at)} · some missing` : formatTime(s.delivered_at))
+                : unknown ? "Not confirmed" : s.arrived_at ? `Arrived ${formatTime(s.arrived_at)}` : "—"}
             </div>
             <div className="text-[11px] text-wp-text-2">{s.proof_files ? `${s.proof_files} file${s.proof_files > 1 ? "s" : ""}` : ""}</div>
           </div>
@@ -230,9 +241,12 @@ export function TripStops({ trip, stops, lateness }: { trip: FleetRow; stops: Mo
 export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }: {
   e: Exception; actions: LiveActions; showDepot: boolean; onOpen?: () => void; compact?: boolean;
 }) {
-  const base = EXCEPTION_STYLE[e.kind] ?? { label: e.kind, state: "info" as Tone };
-  const style = e.kind === "likely_late" ? { ...base, state: (e.severity === "crit" ? "crit" : e.severity === "info" ? "info" : "warn") as Tone } : base;
-  const isFlag = Boolean(e.flag_id) && (e.kind === "loader_flag" || e.kind === "driver_reported");
+  const style = { label: EXCEPTION_LABEL[e.kind] ?? e.kind, state: exceptionTone(e) };
+  const loaderFlag = Boolean(e.flag_id) && e.kind === "loader_flag";
+  const driverFlag = Boolean(e.flag_id) && e.kind === "driver_reported";
+  const [writing, setWriting] = useState(false);
+  const [message, setMessage] = useState("");
+  const answered = Boolean(e.flag_id && actions.replies[e.flag_id]);
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-wp-border first:border-t-0", compact ? "py-2" : "py-3")}>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -256,11 +270,28 @@ export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }:
           The driver’s phone keeps recording offline. Stops after the last signal show as not confirmed until it syncs.
         </div>
       )}
-      {isFlag && (
+      {loaderFlag && !answered && (
         <div className="flex flex-wrap gap-1.5">
           <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "proceed_short", "Send partial")}>Send partial</Button>
           <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "hold", "Hold the vehicle, replacement coming")}>Hold vehicle</Button>
         </div>
+      )}
+      {driverFlag && !answered && !writing && (
+        <div className="flex flex-wrap gap-1.5">
+          <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => setWriting(true)}>Reply to driver</Button>
+          <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "note", "Handled by dispatch", false)}>Mark handled</Button>
+        </div>
+      )}
+      {driverFlag && !answered && writing && (
+        <form className="flex basis-full flex-wrap gap-1.5"
+              onSubmit={(ev) => { ev.preventDefault(); if (message.trim()) void actions.reply(e, "note", message.trim()); }}>
+          <label htmlFor={`reply-${e.flag_id}`} className="sr-only">Message to the driver</label>
+          <input id={`reply-${e.flag_id}`} value={message} onChange={(ev) => setMessage(ev.target.value)} maxLength={300} autoFocus
+                 placeholder="e.g. Change the tyre; I'm telling the stores you'll be 30 min late"
+                 className="h-8 min-w-0 flex-1 rounded-md border border-wp-border bg-wp-surface px-2 text-[13px]" />
+          <Button type="submit" className="h-8 min-h-8 px-3" disabled={!message.trim()}>Send</Button>
+          <Button type="button" variant="secondary" className="h-8 min-h-8 px-3" onClick={() => setWriting(false)}>Cancel</Button>
+        </form>
       )}
       {e.kind === "delivery_failed" && e.order_id && !actions.moved[e.order_id] && (
         <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.requeue(e.order_id!)}>Move to next delivery day</Button>
@@ -420,7 +451,8 @@ function CloseoutCard({ c, actions }: { c: Closeout; actions: LiveActions }) {
       </div>
       <div className="grid grid-cols-2 gap-2 text-[13px] sm:grid-cols-4">
         <div><b className="text-[18px] text-wp-good">{c.delivered}</b><div className="text-wp-text-2">delivered in full</div></div>
-        <div><b className="text-[18px] text-wp-warn">{c.delivered_in_part}</b><div className="text-wp-text-2">some items missing</div></div>
+        <div><b className="text-[18px] text-wp-warn">{c.delivered_in_part}</b>
+          <div className="text-wp-text-2">some items missing{c.loaded_short ? ` · ${c.loaded_short} loaded short at the depot` : ""}</div></div>
         <div><b className="text-[18px] text-wp-crit">{c.not_delivered}</b><div className="text-wp-text-2">not delivered</div></div>
         <div><b className="text-[18px]">{c.confirmed_by_store}</b><div className="text-wp-text-2">confirmed by the store · {c.awaiting_store} waiting</div></div>
       </div>

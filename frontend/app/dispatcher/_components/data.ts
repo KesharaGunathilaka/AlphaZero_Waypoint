@@ -211,7 +211,10 @@ export type FleetRow = {
   last_seen_at: string | null;
   no_signal: boolean;
   exception_count: number;
+  /** The worst alert on this trip (worked out in the browser from the alerts): sets its colour on Live. */
+  worst?: Severity | null;
 };
+export type Severity = "crit" | "warn" | "info";
 export type Exception = {
   kind: string;
   depot: string | null;
@@ -249,6 +252,8 @@ export type Closeout = {
   depot: string;
   delivered: number;
   delivered_in_part: number;
+  /** Of those: the driver handed over all that was on board, but the loader had left some short. */
+  loaded_short?: number;
   not_delivered: number;
   not_yet: number;
   confirmed_by_store: number;
@@ -269,18 +274,30 @@ export type Monitor = {
   server_time: string;
 };
 
-export const EXCEPTION_STYLE: Record<string, { label: string; state: Tone }> = {
-  delivery_failed: { label: "Delivery failed", state: "crit" },
-  driver_reported: { label: "Driver reported", state: "info" },
-  short_loaded: { label: "Short-loaded", state: "crit" },
-  no_signal: { label: "No signal", state: "offline" },
-  late: { label: "Late", state: "warn" },
-  likely_late: { label: "Likely to miss window", state: "warn" },
-  loader_flag: { label: "Loader flag", state: "warn" },
-  plan_conflict: { label: "Plan conflict", state: "warn" },
-  instruction_unseen: { label: "Instruction unseen", state: "info" },
-  rejected_event: { label: "Record rejected", state: "warn" },
+export const EXCEPTION_LABEL: Record<string, string> = {
+  delivery_failed: "Delivery failed",
+  driver_reported: "Driver reported",
+  short_loaded: "Short-loaded",
+  no_signal: "No signal",
+  late: "Late",
+  likely_late: "Likely to miss window",
+  loader_flag: "Loader flag",
+  plan_conflict: "Plan conflict",
+  instruction_unseen: "Not opened yet",
+  rejected_event: "Record refused",
 };
+
+/** An alert's colour comes from how serious it is (the server's severity), so red always means critical. */
+export function exceptionTone(e: Pick<Exception, "kind" | "severity">): Tone {
+  if (e.kind === "no_signal") return "offline";
+  return e.severity === "crit" ? "crit" : e.severity === "info" ? "info" : "warn";
+}
+
+/** The worst severity among a trip's alerts (no signal is shown on its own, so it doesn't count here). */
+export function worstSeverity(alerts: Exception[]): Severity | null {
+  const seen = new Set(alerts.filter((e) => e.kind !== "no_signal").map((e) => e.severity));
+  return seen.has("crit") ? "crit" : seen.has("warn") ? "warn" : seen.has("info") ? "info" : null;
+}
 
 // ----------------------------------------------------------------- ledger ----
 export type LedgerRecord = {

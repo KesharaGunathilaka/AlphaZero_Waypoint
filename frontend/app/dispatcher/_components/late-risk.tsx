@@ -37,7 +37,7 @@ export function LateRisk({ f, at, className }: {
       title={f.why.join(" · ")}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] leading-[15px] font-semibold whitespace-nowrap",
-        f.level === "likely" && "bg-wp-crit-tint text-wp-crit",
+        f.level === "likely" && "bg-wp-warn text-wp-on-action",  // amber: red is kept for a critical problem
         f.level === "risk" && "bg-wp-warn-tint text-wp-warn",
         className,
       )}

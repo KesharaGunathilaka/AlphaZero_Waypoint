@@ -21,6 +21,7 @@ class MoveIn(BaseModel):
     order_id: int
     vehicle_id: int
     seq: Literal[1, 2]
+    check_only: bool = False  # try the move, report the rules it would break, change nothing
 
 
 class DeferIn(BaseModel):
@@ -45,6 +46,7 @@ class ReplyIn(BaseModel):
     type: Literal["skip_stop", "reorder", "hold", "reassign", "proceed_short", "note"] = "note"
     text: str | None = Field(default=None, max_length=1000)
     resolve: bool = True
+    send: bool = True  # false: mark the flag handled without sending the driver or loader anything
 
 
 def _depot(user: CurrentUser) -> int:
@@ -300,6 +302,10 @@ async def move_order(plan_id: int, body: MoveIn, user: Dispatcher, db: DbSession
     await scalar(db, "SELECT assign_order(:o, :s, :u)", {"o": body.order_id, "s": stop_id, "u": user.user_id})
     await _tidy(db, plan_id, user)
     violations = await rows(db, "SELECT * FROM plan_violations(:p)", {"p": plan_id})
+    if body.check_only:
+        # Try to fit asks before the dispatcher chooses: the rules this move would break, then nothing kept.
+        await db.rollback()
+        return {"route_id": None, "stop_id": None, "violations": violations}
     await db.commit()
     return {"route_id": route_id, "stop_id": stop_id, "violations": violations}
 
@@ -369,12 +375,20 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
         SELECT depot_id FROM depot WHERE CAST(:all AS boolean) OR depot_id = :d ORDER BY name""",
         {"all": user.all_depots or user.role == "admin", "d": user.depot_id})]
     chosen = visible if depot == "all" else [d for d in visible if str(d) == depot]
-    # Each depot's current run: the one on the road, else the next planned one, else the last finished one.
+    # Each depot's current run: the one on the road, else the next planned one, else one finished today (or
+    # later), else the next day still to plan (shown as not planned yet), else the last finished one in the past.
     runs = await rows(db, """
+        WITH today AS (SELECT (app_now() AT TIME ZONE 'Asia/Colombo')::date AS d)
         SELECT DISTINCT ON (rp.depot_id) rp.*, dp.name AS depot
-        FROM run_progress rp JOIN depot dp ON dp.depot_id = rp.depot_id
-        WHERE rp.depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) AND rp.state IN ('planned', 'in_progress', 'complete')
-        ORDER BY rp.depot_id, CASE rp.state WHEN 'in_progress' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
+        FROM run_progress rp JOIN depot dp ON dp.depot_id = rp.depot_id CROSS JOIN today
+        WHERE rp.depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb)))
+          AND (rp.state IN ('planned', 'in_progress', 'complete')
+               OR rp.state IN ('open', 'closed') AND rp.service_date >= today.d
+                  AND EXISTS (SELECT 1 FROM order_header h WHERE h.run_id = rp.run_id))
+        ORDER BY rp.depot_id,
+                 CASE WHEN rp.state = 'in_progress' THEN 0 WHEN rp.state = 'planned' THEN 1
+                      WHEN rp.state = 'complete' AND rp.service_date >= today.d THEN 2
+                      WHEN rp.state IN ('open', 'closed') THEN 3 ELSE 4 END,
                  CASE WHEN rp.state = 'complete' THEN -(rp.service_date - DATE '2000-01-01')
                       ELSE rp.service_date - DATE '2000-01-01' END""", {"deps": chosen})
     run_ids = [r["run_id"] for r in runs]
@@ -397,7 +411,7 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
             LEFT JOIN route rt ON rt.route_id = e.route_id
             LEFT JOIN depot dp ON dp.depot_id = COALESCE(ru.depot_id, rt.depot_id)
             WHERE e.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb))) OR e.route_id IN ({route_scope})
-            ORDER BY e.urgency, e.since""", {"runs": run_ids}),
+            ORDER BY e.since""", {"runs": run_ids}),
         # Stop by stop for every trip: plan against what the phones have reported.
         "stops": await rows(db, f"""
             SELECT s.route_id, s.stop_id, s.seq, ou.code AS outlet_code, ou.name AS outlet_name, s.planned_arrival,
@@ -422,9 +436,22 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
         "server_time": await scalar(db, "SELECT app_now()"),  # the demo clock, when it runs
     }
     if board["lateness"]:
-        board["exceptions"] = sorted(board["exceptions"] + [late_exception(a) for a in board["lateness"]["alerts"].values()],
-                                     key=lambda e: (e["urgency"], str(e["since"])))
+        board["exceptions"] = board["exceptions"] + [late_exception(a) for a in board["lateness"]["alerts"].values()]
+    board["exceptions"].sort(key=attention_order)
     return board
+
+
+SEVERITY_RANK = {"crit": 0, "warn": 1, "info": 2}
+
+
+def attention_order(e: dict):
+    """Needs attention: critical first, then warnings, then information; inside each, the one waiting longest
+    first, so a new alert never pushes an older critical one down the list."""
+    since = e["since"]
+    if isinstance(since, str):
+        since = datetime.fromisoformat(since)
+    when = since.timestamp() if isinstance(since, datetime) else float("inf")
+    return SEVERITY_RANK.get(e["severity"], 3), when, e["urgency"]
 
 
 def late_exception(a: dict) -> dict:
@@ -452,8 +479,9 @@ async def closeout(db, run_ids: list[int]) -> list[dict]:
     for run_id in run_ids:
         counts = await one(db, """
             SELECT ru.run_id, ru.service_date, ru.state, dp.name AS depot,
-                   count(*) FILTER (WHERE h.status IN ('delivered', 'received') AND d.outcome = 'delivered') AS delivered,
-                   count(*) FILTER (WHERE d.outcome = 'delivered_in_part') AS delivered_in_part,
+                   count(*) FILTER (WHERE h.status IN ('delivered', 'received') AND d.outcome = 'delivered' AND NOT ls.short) AS delivered,
+                   count(*) FILTER (WHERE d.outcome = 'delivered_in_part' OR d.outcome = 'delivered' AND ls.short) AS delivered_in_part,
+                   count(*) FILTER (WHERE d.outcome = 'delivered' AND ls.short) AS loaded_short,
                    count(*) FILTER (WHERE d.outcome = 'not_delivered') AS not_delivered,
                    count(*) FILTER (WHERE d.delivery_id IS NULL) AS not_yet,
                    count(*) FILTER (WHERE h.status = 'received') AS confirmed_by_store,
@@ -463,6 +491,13 @@ async def closeout(db, run_ids: list[int]) -> list[dict]:
             JOIN stop_order so ON so.plan_id = p.plan_id AND so.removed_at IS NULL
             JOIN order_header h ON h.order_id = so.order_id
             LEFT JOIN current_delivery d ON d.order_id = so.order_id
+            -- A driver's "all delivered" is all that was on board; a line the loader left short still reached the
+            -- store short, so it counts as some items missing.
+            CROSS JOIN LATERAL (SELECT EXISTS (
+                SELECT 1 FROM order_line ol
+                JOIN LATERAL (SELECT c.qty_loaded FROM load_confirmation c WHERE c.order_id = ol.order_id AND c.line_no = ol.line_no
+                              ORDER BY c.device_time DESC LIMIT 1) lc ON lc.qty_loaded < ol.qty
+                WHERE ol.order_id = so.order_id) AS short) ls
             WHERE ru.run_id = :r
             GROUP BY ru.run_id, ru.service_date, ru.state, dp.name""", {"r": run_id})
         if counts is None:
@@ -514,9 +549,11 @@ async def reply_to_flag(flag_id: UUID, body: ReplyIn, user: Dispatcher, db: DbSe
     flag = await one(db, "SELECT route_id, stop_id FROM flag WHERE flag_id = :f", {"f": flag_id})
     if flag is None:
         raise not_found("Flag")
-    instruction = await scalar(db, "SELECT send_instruction(:r, :s, :f, CAST(:t AS instruction_type), '{}'::jsonb, :x, :u)",
-                               {"r": flag["route_id"], "s": flag["stop_id"], "f": flag_id, "t": body.type,
-                                "x": body.text, "u": user.user_id})
+    instruction = None
+    if body.send:
+        instruction = await scalar(db, "SELECT send_instruction(:r, :s, :f, CAST(:t AS instruction_type), '{}'::jsonb, :x, :u)",
+                                   {"r": flag["route_id"], "s": flag["stop_id"], "f": flag_id, "t": body.type,
+                                    "x": body.text, "u": user.user_id})
     if body.resolve:
         await scalar(db, "SELECT resolve_flag(:f, :u)", {"f": flag_id, "u": user.user_id})
     await db.commit()
