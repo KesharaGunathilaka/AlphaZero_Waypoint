@@ -377,40 +377,49 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
     chosen = visible if depot == "all" else [d for d in visible if str(d) == depot]
     # Each depot's current run: the one on the road, else the next planned one, else one finished today (or
     # later), else the next day still to plan (shown as not planned yet), else the last finished one in the past.
-    runs = await rows(db, """
+    # Pick the runs from the run table first: run_progress counts alerts and Fresh at risk for every run it reads,
+    # which over a fortnight of history took seconds; it is then read for the chosen runs only.
+    picked = [r["run_id"] for r in await rows(db, """
         WITH today AS (SELECT (app_now() AT TIME ZONE 'Asia/Colombo')::date AS d)
-        SELECT DISTINCT ON (rp.depot_id) rp.*, dp.name AS depot
-        FROM run_progress rp JOIN depot dp ON dp.depot_id = rp.depot_id CROSS JOIN today
-        WHERE rp.depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb)))
-          AND (rp.state IN ('planned', 'in_progress', 'complete')
-               OR rp.state IN ('open', 'closed') AND rp.service_date >= today.d
-                  AND EXISTS (SELECT 1 FROM order_header h WHERE h.run_id = rp.run_id))
-        ORDER BY rp.depot_id,
-                 CASE WHEN rp.state = 'in_progress' THEN 0 WHEN rp.state = 'planned' THEN 1
-                      WHEN rp.state = 'complete' AND rp.service_date >= today.d THEN 2
-                      WHEN rp.state IN ('open', 'closed') THEN 3 ELSE 4 END,
-                 CASE WHEN rp.state = 'complete' THEN -(rp.service_date - DATE '2000-01-01')
-                      ELSE rp.service_date - DATE '2000-01-01' END""", {"deps": chosen})
+        SELECT DISTINCT ON (ru.depot_id) ru.run_id
+        FROM run ru CROSS JOIN today
+        WHERE ru.depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb)))
+          AND (ru.state IN ('planned', 'in_progress', 'complete')
+               OR ru.state IN ('open', 'closed') AND ru.service_date >= today.d
+                  AND EXISTS (SELECT 1 FROM order_header h WHERE h.run_id = ru.run_id))
+        ORDER BY ru.depot_id,
+                 CASE WHEN ru.state = 'in_progress' THEN 0 WHEN ru.state = 'planned' THEN 1
+                      WHEN ru.state = 'complete' AND ru.service_date >= today.d THEN 2
+                      WHEN ru.state IN ('open', 'closed') THEN 3 ELSE 4 END,
+                 CASE WHEN ru.state = 'complete' THEN -(ru.service_date - DATE '2000-01-01')
+                      ELSE ru.service_date - DATE '2000-01-01' END""", {"deps": chosen})]
+    runs = await rows(db, """
+        SELECT rp.*, dp.name AS depot FROM run_progress rp JOIN depot dp ON dp.depot_id = rp.depot_id
+        -- An array (evaluated once), not IN (subquery): the view is then computed for these runs only.
+        WHERE rp.run_id = ANY(ARRAY(SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb))))
+        ORDER BY rp.depot_id""", {"runs": picked})
     run_ids = [r["run_id"] for r in runs]
     route_scope = "SELECT r.route_id FROM route r JOIN plan p ON p.plan_id = r.plan_id WHERE p.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb)))"
     board = {
         "depots": await rows(db, "SELECT depot_id, name FROM depot WHERE depot_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:deps AS jsonb))) ORDER BY name", {"deps": visible}),
         "runs": runs,
         "fleet": await rows(db, f"""
-            SELECT f.*, v.source_id AS vehicle_source_id, dp.name AS depot, di.name AS district, b.code AS brand_code,
+            SELECT f.route_id, f.run_id, f.vehicle_code, f.route_seq, f.state, f.driver_name, f.depart_at, f.stops_total,
+                   f.stops_done, f.next_stop_id, f.next_outlet, f.next_planned, f.last_seen_at, f.no_signal,
+                   v.source_id AS vehicle_source_id, dp.name AS depot, di.name AS district, b.code AS brand_code,
                    r.return_at, r.trip_minutes
-            FROM fleet_status f
+            FROM fleet_status f  -- exception_count is counted below from the alerts already read, not once per trip
             JOIN route r ON r.route_id = f.route_id JOIN vehicle v ON v.vehicle_id = r.vehicle_id
             JOIN depot dp ON dp.depot_id = r.depot_id JOIN district di ON di.district_id = r.district_id
             JOIN brand b ON b.brand_id = r.brand_id
-            WHERE f.route_id IN ({route_scope})
+            WHERE f.route_id = ANY(ARRAY({route_scope}))
             ORDER BY dp.name, v.source_id, f.route_seq""", {"runs": run_ids}),
         "exceptions": await rows(db, f"""
             SELECT e.*, dp.name AS depot FROM monitor_exceptions e
             LEFT JOIN run ru ON ru.run_id = e.run_id
             LEFT JOIN route rt ON rt.route_id = e.route_id
             LEFT JOIN depot dp ON dp.depot_id = COALESCE(ru.depot_id, rt.depot_id)
-            WHERE e.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb))) OR e.route_id IN ({route_scope})
+            WHERE e.run_id IN (SELECT value::int FROM jsonb_array_elements_text(CAST(:runs AS jsonb))) OR e.route_id = ANY(ARRAY({route_scope}))
             ORDER BY e.since""", {"runs": run_ids}),
         # Stop by stop for every trip: plan against what the phones have reported.
         "stops": await rows(db, f"""
@@ -425,7 +434,7 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
                      WHERE so.stop_id = s.stop_id AND so.removed_at IS NULL) AS proof_files
             FROM stop s JOIN outlet ou ON ou.outlet_id = s.outlet_id
             LEFT JOIN stop_arrival a ON a.stop_id = s.stop_id
-            WHERE s.removed_at IS NULL AND s.route_id IN ({route_scope})
+            WHERE s.removed_at IS NULL AND s.route_id = ANY(ARRAY({route_scope}))
             ORDER BY s.route_id, s.seq""", {"runs": run_ids}),
         "closeout": await closeout(db, run_ids),
         # The lateness model, replayed from where each van really is; alerts where today's delays raised a stop's
@@ -438,6 +447,8 @@ async def monitor(user: Dispatcher, db: DbSession, depot: str = "all"):
     if board["lateness"]:
         board["exceptions"] = board["exceptions"] + [late_exception(a) for a in board["lateness"]["alerts"].values()]
     board["exceptions"].sort(key=attention_order)
+    for f in board["fleet"]:
+        f["exception_count"] = sum(1 for e in board["exceptions"] if e["route_id"] == f["route_id"])
     return board
 
 
