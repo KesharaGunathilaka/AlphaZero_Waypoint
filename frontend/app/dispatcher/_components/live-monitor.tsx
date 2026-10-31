@@ -7,16 +7,20 @@ import { Banner, StatusPill, type Tone } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { EXCEPTION_STYLE, type Closeout, type Exception, type FleetRow, type Monitor, type MonitorStop, type RunProgress } from "./data";
+import { EXCEPTION_LABEL, exceptionTone, worstSeverity, type Closeout, type Exception, type FleetRow, type Lateness, type Monitor,
+         type MonitorStop, type RunProgress } from "./data";
+import { LateRisk, countLevel, forecastOf, percent, worstStop } from "./late-risk";
+import { AlertSoundToggle, useLiveAlerts } from "./live-alerts";
 import { LiveOverview } from "./live-overview";
 
 const FLEET_COLUMNS = "grid grid-cols-[96px_120px_110px_minmax(0,1fr)_64px_180px] gap-3";
-const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_56px_96px_70px] gap-2";
+const DETAIL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_76px_96px_70px] gap-2";
 
 /** How a vehicle is doing, worst first. No signal never shows as "on time": we do not know. */
 export function vehicleStatus(f: FleetRow): { state: Tone; label: string; risk: number } {
+  if (f.worst === "crit") return { state: "crit", label: "Problem", risk: -1 };
   if (f.no_signal) return { state: "offline", label: `No signal${f.last_seen_at ? ` since ${formatTime(f.last_seen_at)}` : ""}`, risk: 0 };
-  if (f.exception_count > 0) return { state: "warn", label: "Needs attention", risk: 1 };
+  if (f.worst === "warn" || (f.worst === undefined && f.exception_count > 0)) return { state: "warn", label: "Needs attention", risk: 1 };
   switch (f.state) {
     case "on_the_way": return { state: "good", label: "On the way", risk: 2 };
     case "loaded": return { state: "info", label: "Loaded, not departed", risk: 3 };
@@ -28,6 +32,8 @@ export function vehicleStatus(f: FleetRow): { state: Tone; label: string; risk: 
 }
 
 const RUN_STATE: Record<string, { tone: Tone; label: string }> = {
+  open: { tone: "info", label: "Not planned yet" },
+  closed: { tone: "info", label: "Orders closed, plan not sent" },
   planned: { tone: "info", label: "Plan sent, at the depot" },
   in_progress: { tone: "good", label: "On the road" },
   complete: { tone: "good", label: "Day complete" },
@@ -46,7 +52,8 @@ const VIEWS: [View, string][] = [["overview", "Overview"], ["trips", "Trips"], [
 export type LiveActions = {
   replies: Record<string, string>;
   moved: Record<number, string>;
-  reply: (e: Exception, type: "proceed_short" | "hold", text: string) => Promise<void>;
+  /** Answer a flag; `send: false` marks it handled without sending the driver or loader anything. */
+  reply: (e: Exception, type: "proceed_short" | "hold" | "note", text: string, send?: boolean) => Promise<void>;
   requeue: (orderId: number) => Promise<void>;
   /** Fleet codes in database texts (RV-03) shown as the VEH ids used everywhere else; "Short x2.00" as "2 short". */
   named: (text: string) => string;
@@ -62,6 +69,7 @@ export function LiveMonitor() {
   const [view, setView] = useState<View>("overview");
   const [full, setFull] = useState(false);
   const monitor = useApiData<Monitor>(`/dispatch/monitor?depot=${scope}`, 15_000);
+  const alerts = useLiveAlerts(monitor.data?.exceptions);
   const request = useApi();
   const [replies, setReplies] = useState<Record<string, string>>({});
   const [moved, setMoved] = useState<Record<number, string>>({});
@@ -85,7 +93,11 @@ export function LiveMonitor() {
     );
   }
 
-  const m = monitor.data;
+  // Each trip's colour follows its worst alert, so a failed delivery reads red wherever the trip appears.
+  const m: Monitor = {
+    ...monitor.data,
+    fleet: monitor.data.fleet.map((f) => ({ ...f, worst: worstSeverity(monitor.data!.exceptions.filter((e) => e.route_id === f.route_id)) })),
+  };
   const codes = new Map(m.fleet.map((f) => [f.vehicle_code, f.vehicle_source_id]));
   const actions: LiveActions = {
     replies,
@@ -93,13 +105,13 @@ export function LiveMonitor() {
     named: (text) => text
       .replace(/\b[A-Z]{2}-\d{2}\b/g, (code) => codes.get(code) ?? code)
       .replace(/\b(Short|Missing|Damaged) x(\d+(?:\.\d+)?)/g, (_, kind: string, n: string) => `${Number(n)} ${kind.toLowerCase()}`),
-    reply: async (e, type, text) => {
+    reply: async (e, type, text, send = true) => {
       if (!e.flag_id) return;
       const id = e.flag_id;
-      setReplies((r) => ({ ...r, [id]: "Sending…" }));
+      setReplies((r) => ({ ...r, [id]: send ? "Sending…" : "Saving…" }));
       try {
-        await request(`/dispatch/flags/${id}/reply`, { method: "POST", body: { type, text, resolve: true } });
-        setReplies((r) => ({ ...r, [id]: `Sent: “${text}”. It reaches the tablet or phone on its next sync.` }));
+        await request(`/dispatch/flags/${id}/reply`, { method: "POST", body: { type, text, resolve: true, send } });
+        setReplies((r) => ({ ...r, [id]: send ? `Sent: “${text}”. It reaches the tablet or phone on its next sync.` : "Marked handled." }));
         await monitor.reload();
       } catch (err) {
         setReplies((r) => ({ ...r, [id]: errorMessage(err) }));
@@ -147,6 +159,7 @@ export function LiveMonitor() {
               ))}
             </div>
           )}
+          <AlertSoundToggle {...alerts} />
           <Button variant="secondary" className="hidden h-8 gap-1.5 lg:inline-flex" onClick={toggleFullScreen}
                   title="Use the whole screen, e.g. on the office wall display">
             {full ? <Minimize2 className="size-3.5" aria-hidden /> : <Maximize2 className="size-3.5" aria-hidden />}
@@ -168,8 +181,16 @@ export function LiveMonitor() {
   );
 }
 
-/** Stop by stop for one trip: plan against what the phone reported. */
-export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[] }) {
+/** The stops of a trip still ahead (not delivered or failed yet), with the model's forecast for each. */
+export function aheadRisk(m: Monitor, routeId: number) {
+  const ahead = m.stops.filter((s) => s.route_id === routeId && !s.delivered_at);
+  return { worst: worstStop(m.lateness, ahead.map((s) => s.stop_id)), ahead,
+           likely: countLevel(m.lateness, ahead.map((s) => s.stop_id), "likely"),
+           risk: countLevel(m.lateness, ahead.map((s) => s.stop_id), "risk") };
+}
+
+/** Stop by stop for one trip: plan against what the phone reported, and the model's forecast for what is ahead. */
+export function TripStops({ trip, stops, lateness }: { trip: FleetRow; stops: MonitorStop[]; lateness?: Lateness | null }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[11px] text-wp-text-2">
@@ -180,15 +201,27 @@ export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[
       </div>
       {stops.map((s) => {
         const failed = s.outcomes?.includes("not_delivered");
+        const part = !failed && s.outcomes?.includes("delivered_in_part");
         const unknown = !s.delivered_at && trip.no_signal;
         return (
           <div key={s.stop_id}
                className={cn(DETAIL_COLUMNS, "items-center border-t border-wp-border py-2",
                              unknown && "bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,var(--wp-surface-2)_6px,var(--wp-surface-2)_12px)]")}>
-            <div>{s.delivered_at ? (failed ? "✕" : "●") : "○"} {s.outlet_code}</div>
-            <div>{formatTime(s.planned_arrival)}</div>
-            <div className={failed ? "font-semibold text-wp-crit" : unknown ? "text-wp-offline" : "text-wp-text"}>
-              {s.delivered_at ? (failed ? "Not delivered" : formatTime(s.delivered_at)) : unknown ? "Not confirmed" : s.arrived_at ? `Arrived ${formatTime(s.arrived_at)}` : "—"}
+            <div className="flex flex-col items-start gap-0.5">
+              <span>{s.delivered_at ? (failed ? "✕" : part ? "◐" : "●") : "○"} {s.outlet_code}</span>
+              {!s.delivered_at && <LateRisk f={forecastOf(lateness, s.stop_id)} />}
+            </div>
+            <div>
+              {formatTime(s.planned_arrival)}
+              {!s.delivered_at && forecastOf(lateness, s.stop_id) && (
+                <div className="text-[11px] text-wp-text-2" title={forecastOf(lateness, s.stop_id)!.why.join(" · ")}>
+                  model ~{formatTime(forecastOf(lateness, s.stop_id)!.expected_arrival)}
+                </div>
+              )}
+            </div>
+            <div className={failed ? "font-semibold text-wp-crit" : part ? "font-semibold text-wp-warn" : unknown ? "text-wp-offline" : "text-wp-text"}>
+              {s.delivered_at ? (failed ? "Not delivered" : part ? `${formatTime(s.delivered_at)} · some missing` : formatTime(s.delivered_at))
+                : unknown ? "Not confirmed" : s.arrived_at ? `Arrived ${formatTime(s.arrived_at)}` : "—"}
             </div>
             <div className="text-[11px] text-wp-text-2">{s.proof_files ? `${s.proof_files} file${s.proof_files > 1 ? "s" : ""}` : ""}</div>
           </div>
@@ -208,8 +241,12 @@ export function TripStops({ trip, stops }: { trip: FleetRow; stops: MonitorStop[
 export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }: {
   e: Exception; actions: LiveActions; showDepot: boolean; onOpen?: () => void; compact?: boolean;
 }) {
-  const style = EXCEPTION_STYLE[e.kind] ?? { label: e.kind, state: "info" as Tone };
-  const isFlag = Boolean(e.flag_id) && (e.kind === "loader_flag" || e.kind === "driver_reported");
+  const style = { label: EXCEPTION_LABEL[e.kind] ?? e.kind, state: exceptionTone(e) };
+  const loaderFlag = Boolean(e.flag_id) && e.kind === "loader_flag";
+  const driverFlag = Boolean(e.flag_id) && e.kind === "driver_reported";
+  const [writing, setWriting] = useState(false);
+  const [message, setMessage] = useState("");
+  const answered = Boolean(e.flag_id && actions.replies[e.flag_id]);
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-wp-border first:border-t-0", compact ? "py-2" : "py-3")}>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -221,16 +258,40 @@ export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }:
               className={cn("min-w-0 basis-full text-left font-semibold", compact ? "text-[13px]" : "", onOpen && "cursor-pointer hover:underline")}>
         {actions.named(e.detail)}
       </button>
+      {e.kind === "likely_late" && e.late_probability != null && (
+        <div className="basis-full text-[11px] text-wp-text-2">
+          Chance now <b className="text-wp-text">{percent(e.late_probability)}</b>, {percent(e.was ?? 0)} when the plan was sent
+          {e.why && e.why.length > 0 && <> · {e.why.join(" · ")}</>}
+          {!e.reply && " · the store has been told"}
+        </div>
+      )}
       {e.kind === "no_signal" && !compact && (
         <div className="basis-full text-[11px] text-wp-text-2">
           The driver’s phone keeps recording offline. Stops after the last signal show as not confirmed until it syncs.
         </div>
       )}
-      {isFlag && (
+      {loaderFlag && !answered && (
         <div className="flex flex-wrap gap-1.5">
           <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "proceed_short", "Send partial")}>Send partial</Button>
           <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "hold", "Hold the vehicle, replacement coming")}>Hold vehicle</Button>
         </div>
+      )}
+      {driverFlag && !answered && !writing && (
+        <div className="flex flex-wrap gap-1.5">
+          <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => setWriting(true)}>Reply to driver</Button>
+          <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.reply(e, "note", "Handled by dispatch", false)}>Mark handled</Button>
+        </div>
+      )}
+      {driverFlag && !answered && writing && (
+        <form className="flex basis-full flex-wrap gap-1.5"
+              onSubmit={(ev) => { ev.preventDefault(); if (message.trim()) void actions.reply(e, "note", message.trim()); }}>
+          <label htmlFor={`reply-${e.flag_id}`} className="sr-only">Message to the driver</label>
+          <input id={`reply-${e.flag_id}`} value={message} onChange={(ev) => setMessage(ev.target.value)} maxLength={300} autoFocus
+                 placeholder="e.g. Change the tyre; I'm telling the stores you'll be 30 min late"
+                 className="h-8 min-w-0 flex-1 rounded-md border border-wp-border bg-wp-surface px-2 text-[13px]" />
+          <Button type="submit" className="h-8 min-h-8 px-3" disabled={!message.trim()}>Send</Button>
+          <Button type="button" variant="secondary" className="h-8 min-h-8 px-3" onClick={() => setWriting(false)}>Cancel</Button>
+        </form>
       )}
       {e.kind === "delivery_failed" && e.order_id && !actions.moved[e.order_id] && (
         <Button variant="secondary" className="h-7 min-h-7 px-2.5" onClick={() => void actions.requeue(e.order_id!)}>Move to next delivery day</Button>
@@ -238,6 +299,45 @@ export function AttentionRow({ e, actions, showDepot, onOpen, compact = false }:
       {e.flag_id && actions.replies[e.flag_id] && <div className="basis-full text-[11px] font-semibold text-wp-info">{actions.replies[e.flag_id]}</div>}
       {e.order_id && actions.moved[e.order_id] && <div className="basis-full text-[11px] font-semibold text-wp-info">{actions.moved[e.order_id]}</div>}
     </div>
+  );
+}
+
+/**
+ * Needs attention, in the server's order (critical, warning, information; oldest first). Alerts of one kind and
+ * severity stay together where the oldest of them falls; a group of more than four shows its three oldest and
+ * opens on request, so twenty vans that haven't left don't bury a driver's report.
+ */
+export function AttentionList({ exceptions, actions, showDepot, compact = false, onOpen }: {
+  exceptions: Exception[]; actions: LiveActions; showDepot: boolean; compact?: boolean; onOpen: (routeId: number) => void;
+}) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const groups: { key: string; list: Exception[] }[] = [];
+  for (const e of exceptions) {
+    const key = `${exceptionTone(e)}-${e.kind}`;
+    const group = groups.find((g) => g.key === key);
+    if (group) group.list.push(e);
+    else groups.push({ key, list: [e] });
+  }
+  if (exceptions.length === 0) return <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>;
+  return (
+    <>
+      {groups.map((g) => {
+        const folded = g.list.length > 4 && !open[g.key];
+        return (
+          <div key={g.key} className="border-t border-wp-border first:border-t-0">
+            {(folded ? g.list.slice(0, 3) : g.list).map((e, i) => (
+              <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
+                            showDepot={showDepot} compact={compact} onOpen={e.route_id ? () => onOpen(e.route_id!) : undefined} />
+            ))}
+            {g.list.length > 4 && (
+              <Button variant="link" className="mb-2 h-7 min-h-7 px-0" onClick={() => setOpen((o) => ({ ...o, [g.key]: !o[g.key] }))}>
+                {folded ? `Show ${g.list.length - 3} more · ${EXCEPTION_LABEL[g.list[0].kind] ?? g.list[0].kind}` : "Show fewer"}
+              </Button>
+            )}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
@@ -255,7 +355,10 @@ export function MovedToday({ actions }: { actions: LiveActions }) {
 function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions; showDepot: boolean }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [showDone, setShowDone] = useState(false);
-  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || a.vehicle_source_id.localeCompare(b.vehicle_source_id));
+  // Same status: the trip whose stops ahead are most likely to be late goes first.
+  const lateAhead = (f: FleetRow) => aheadRisk(m, f.route_id).worst?.f.late_probability ?? 0;
+  const fleet = [...m.fleet].sort((a, b) => vehicleStatus(a).risk - vehicleStatus(b).risk || lateAhead(b) - lateAhead(a)
+                                            || a.vehicle_source_id.localeCompare(b.vehicle_source_id));
   const finished = (f: FleetRow) => f.state === "complete" && !f.no_signal && f.exception_count === 0;
   const doneCount = fleet.filter(finished).length;
   const shown = showDone ? fleet : fleet.filter((f) => !finished(f));
@@ -272,11 +375,7 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
       <section className="flex flex-col rounded-lg border border-wp-border bg-wp-surface p-4">
         <h2 className="mb-1 text-[15px] leading-5 font-semibold">Needs attention{showDepot ? " · both depots" : ""}</h2>
         <MovedToday actions={actions} />
-        {m.exceptions.length === 0 && <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>}
-        {m.exceptions.map((e, i) => (
-          <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
-                        showDepot={showDepot} onOpen={e.route_id ? () => setSelected(e.route_id) : undefined} />
-        ))}
+        <AttentionList exceptions={m.exceptions} actions={actions} showDepot={showDepot} onOpen={setSelected} />
       </section>
       <div className={cn("grid items-start gap-4", chosen && "xl:grid-cols-[minmax(0,1fr)_460px]")}>
         <section className="flex flex-col gap-1 overflow-x-auto rounded-lg border border-wp-border bg-wp-surface p-4">
@@ -305,7 +404,10 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
                   <div className="text-[12px] text-wp-text-2">{f.depot}</div>
                   <div className="font-semibold">{f.vehicle_source_id} · trip {f.route_seq}</div>
                   <div className="text-xs tracking-[2px]">{dots(f)}</div>
-                  <div>{f.next_outlet ?? (f.state === "complete" ? "Back to depot" : "—")}</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {f.next_outlet ?? (f.state === "complete" ? "Back to depot" : "—")}
+                    <WorstAhead m={m} routeId={f.route_id} />
+                  </div>
                   <div>{f.next_planned ? formatTime(f.next_planned) : "—"}</div>
                   <div><StatusPill state={status.state}>{status.label}</StatusPill></div>
                 </button>
@@ -320,7 +422,7 @@ function TripsView({ m, actions, showDepot }: { m: Monitor; actions: LiveActions
               <h2 className="text-[15px] leading-5 font-semibold">{chosen.vehicle_source_id} trip {chosen.route_seq} · plan against actual</h2>
               <button type="button" onClick={() => setSelected(null)} className="cursor-pointer text-sm text-wp-muted">✕ Close</button>
             </div>
-            <TripStops trip={chosen} stops={m.stops.filter((s) => s.route_id === chosen.route_id)} />
+            <TripStops trip={chosen} stops={m.stops.filter((s) => s.route_id === chosen.route_id)} lateness={m.lateness} />
           </section>
         )}
       </div>
@@ -384,7 +486,8 @@ function CloseoutCard({ c, actions }: { c: Closeout; actions: LiveActions }) {
       </div>
       <div className="grid grid-cols-2 gap-2 text-[13px] sm:grid-cols-4">
         <div><b className="text-[18px] text-wp-good">{c.delivered}</b><div className="text-wp-text-2">delivered in full</div></div>
-        <div><b className="text-[18px] text-wp-warn">{c.delivered_in_part}</b><div className="text-wp-text-2">some items missing</div></div>
+        <div><b className="text-[18px] text-wp-warn">{c.delivered_in_part}</b>
+          <div className="text-wp-text-2">some items missing{c.loaded_short ? ` · ${c.loaded_short} loaded short at the depot` : ""}</div></div>
         <div><b className="text-[18px] text-wp-crit">{c.not_delivered}</b><div className="text-wp-text-2">not delivered</div></div>
         <div><b className="text-[18px]">{c.confirmed_by_store}</b><div className="text-wp-text-2">confirmed by the store · {c.awaiting_store} waiting</div></div>
       </div>
@@ -437,4 +540,10 @@ function CloseoutCard({ c, actions }: { c: Closeout; actions: LiveActions }) {
 
 function Page({ children }: { children: ReactNode }) {
   return <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-4 sm:p-6">{children}</div>;
+}
+
+/** The trip's worst stop still ahead, named, since it is often not the next one. */
+function WorstAhead({ m, routeId }: { m: Monitor; routeId: number }) {
+  const { worst, ahead } = aheadRisk(m, routeId);
+  return <LateRisk f={worst?.f} at={ahead.find((s) => s.stop_id === worst?.stopId)?.outlet_code} />;
 }

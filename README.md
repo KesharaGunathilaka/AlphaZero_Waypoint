@@ -30,9 +30,13 @@ CSVs from `data/general/` and a demo delivery day; it takes about a minute.
 |---|---|---|
 | Web app | http://localhost:3000 | Next.js 16 |
 | API | http://localhost:8000/docs | FastAPI, OpenAPI docs |
-| Database | `postgresql://waypoint:waypoint@localhost:5433/waypoint` | PostgreSQL 18, schema `wp` |
+| Database | `postgresql://waypoint:waypoint@localhost:5433/waypoint` | PostgreSQL 18, schema `wp` (owner login) |
 
-Start again from nothing: `docker compose down -v`, then `docker compose up --build`.
+The API itself does not use the owner login: it connects as `waypoint_api`, a restricted role that
+row-level security and the append-only rules apply to ([docs/security.md](docs/security.md)).
+
+Start again from nothing: `docker compose down -v`, then `docker compose up --build`. **Do this once after
+updating from an older version**: the API's role is created when the database is first built.
 
 ### Sign in
 
@@ -63,11 +67,12 @@ the dispatcher switches to Peliyagoda with the depot selector in the header.
    pre-filled). Note the cutoff: 16:00 the working day before.
 2. **Dispatcher** → *Plan*. Follow the step strip; the main button is always the next step:
    1. **Close orders now** (normally automatic at the cutoff). Later orders go to the next day.
-   2. **Build the plan**: the engine places every order it legally can (21 trips, 67 orders).
-   3. **Check what can't go**: 3 orders, each with the reason the store will see. *Try to fit* lists
+   2. **Build the plan**: the engine places every order it legally can (22 trips, 69 of 70 orders; the
+      tests prove no legal plan serves more).
+   3. **Check what can't go**: 1 order, with the reason the store will see. *Try to fit* lists
       every vehicle and the rule that stops it (OUT078: both VEH057 trips full, trucks can't reach a
       van-only outlet, VEH058 in the workshop, dry vehicles can't carry chilled).
-   4. **Send plan to depot**: loaders and drivers get their trips; the 3 stores are told.
+   4. **Send plan to depot**: loaders and drivers get their trips; the store is told.
 3. **Loader** → open **VEH057 · trip 1** → load stop 3 first; *Flag* one line as Short → confirm
    the stops → **Departure check** → release to the driver (signed with the loader's account).
 4. **Driver** (`driver.veh057`) → **Start trip** → **I'm here** → *All delivered*, name, signature →
@@ -110,23 +115,44 @@ Details: [docs/database.md](docs/database.md). API: [docs/api.md](docs/api.md).
 
 ```bash
 cd backend
-# needs the Docker database running (docker compose up db); both scripts reset the demo data
-ENVIRONMENT=development AUTH_DEV_BYPASS=true ALLOWED_HOSTS='["testserver"]' PUBLIC_API_URL=http://testserver \
-DATABASE_URL="postgresql://waypoint:waypoint@localhost:5433/waypoint?sslmode=disable" uv run python tests/rules_audit.py
+# needs the Docker database running (docker compose up db); every script resets the demo data
+ENVIRONMENT=development AUTH_DEV_BYPASS=true AUTH_MODE=local LOCAL_AUTH_SECRET=test-only-local-secret-0123456789abcdef \
+ALLOWED_HOSTS='["testserver"]' PUBLIC_API_URL=http://testserver \
+DATABASE_URL="postgresql://waypoint_api:waypoint-api-local@localhost:5433/waypoint?sslmode=disable" \
+ADMIN_DATABASE_URL="postgresql://waypoint:waypoint@localhost:5433/waypoint?sslmode=disable" \
+uv run python tests/rules_audit.py
 ```
 
-- `tests/rules_audit.py`: **116 checks**. Recomputes every booklet rule from the CSVs (not from the
+The API under test connects as the restricted role (`DATABASE_URL`), exactly as in Docker; test set-up uses
+the owner (`ADMIN_DATABASE_URL`).
+
+- `tests/security_audit.py`: **56 checks** that attack every protection: the API's database role (append-only
+  tables, row-level security, no schema changes), attachments (real images only, only on your own record,
+  never replaced), forged and expired tokens, the sign-in throttle, cross-depot edits, headers and request
+  limits. See [docs/security.md](docs/security.md).
+
+- `tests/rules_audit.py`: **118 checks**. Recomputes every booklet rule from the CSVs (not from the
   database) for the Kandy demo day, a Peliyagoda peak day (all 75 outlets order, two refrigerated
-  vehicles in the workshop) and the next day's run; searches for any avoidable deferral; tries every
+  vehicles in the workshop) and the next day's run; checks whether any deferral was avoidable (below); tries every
   way of breaking a rule by hand through the API (each must be refused); checks the cutoff, release,
   deferral records, store notices and depot switching.
-- `tests/day_scenario.py`: **one complete delivery day, both depots** (114 checks): store orders of every
+- `tests/day_scenario.py`: **one complete delivery day, both depots** (118 checks): store orders of every
   category, the 16:00 cutoff on the clock, both plans audited rule by rule, every trip loaded and driven
   (failed, short and offline deliveries), failed orders moved on, receipts, the end-of-day close with fuel
   against the weekly quota, and the next day serving everything carried over. Screens of the same day:
   [docs/walkthrough/waypoint-delivery-day.html](docs/walkthrough/waypoint-delivery-day.html).
 - `tests/walkthrough.py`: the four roles end to end through the API, including offline sync,
   idempotent resends, corrections and photo links.
+
+**Was any deferral avoidable?** Two checks per planned day. A quick one tries each deferred order on
+every trip and free vehicle slot. An exact one (`tests/optimality.py`) asks whether *any* legal plan serves
+more orders, putting outlets deferred before first: a mixed-integer program over the same booklet rules
+(HiGHS, a test-only dependency: `uv sync` installs it, the Docker image does not), started from the engine's
+plan, with time windows checked by replaying every trip and cut out lazily. It reports **proven**, a
+**better plan** (the check fails and names the orders), or **not proven** in the time limit with an upper
+bound (`WP_EXACT_SECONDS`, default 120 per plan). Today: both Kandy days are proven optimal; the
+Peliyagoda peak days, with two reefers in the workshop, are not proven within the limit and no better
+plan is found.
 
 Frontend: `cd frontend && pnpm lint && npx tsc --noEmit`.
 

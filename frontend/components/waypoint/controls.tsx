@@ -33,23 +33,26 @@ export function Stepper({
   value,
   onChange,
   step = 1,
+  hideLabel = false,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
   step?: number;
+  /** The label is already on screen next to the stepper: keep it for screen readers only. */
+  hideLabel?: boolean;
 }) {
   const buttonClass =
     "size-11 cursor-pointer rounded-md border border-wp-border bg-wp-surface text-lg font-semibold text-wp-text";
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-semibold text-wp-text-2">{label}</span>
+      <span className={hideLabel ? "sr-only" : "text-[11px] font-semibold text-wp-text-2"}>{label}</span>
       <div className="flex items-center gap-2">
-        <button type="button" aria-label="Decrease" className={buttonClass} onClick={() => onChange(value - step)}>
+        <button type="button" aria-label={`Decrease ${label}`} className={buttonClass} onClick={() => onChange(value - step)}>
           −
         </button>
         <span className="min-w-12 text-center text-[15px] font-bold tabular-nums">{value}</span>
-        <button type="button" aria-label="Increase" className={buttonClass} onClick={() => onChange(value + step)}>
+        <button type="button" aria-label={`Increase ${label}`} className={buttonClass} onClick={() => onChange(value + step)}>
           +
         </button>
       </div>

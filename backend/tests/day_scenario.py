@@ -25,6 +25,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 from booklet_audit import API, OUTLETS, audit, avoidable, check, ok, results, sql
+from optimality import certificate
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -41,8 +42,10 @@ def now() -> str:
 
 
 def as_driver(vehicle: str) -> dict:
-    demo = {"VEH057", "VEH059", "VEH060"}
-    return {"X-Dev-User": f"driver.{vehicle.lower()}@{'example.com' if vehicle in demo else 'waypoint.test'}"}
+    """The driver of a vehicle: every vehicle has one (demo reset names them; test accounts fill any gap)."""
+    email = sql("""SELECT u.email FROM wp.app_user u JOIN wp.vehicle v ON v.vehicle_id = u.vehicle_id
+                   WHERE v.source_id = $1 AND u.active ORDER BY u.user_id LIMIT 1""", vehicle)[0]["email"]
+    return {"X-Dev-User": email}
 
 
 def event(type_: str, route_id: int, payload: dict | None = None, stop_id: int | None = None) -> dict:
@@ -152,6 +155,7 @@ with TestClient(app) as c:
     workshop_k = {v["source_id"] for v in kplan["vehicles"] if not v["active"]}
     trips, by_veh, deferred = audit("3 Kandy", kplan, closed["orders_confirmed"], workshop_k)
     avoidable("3 Kandy", kplan, trips, by_veh, deferred, workshop_k)
+    certificate("3 Kandy", kplan, trips, deferred, workshop_k)
     kinds = {(OUT["brand"], OUT["parking_constraint"] == "van_only", OUT["dock_type"])
              for t in trips for s in t["stops"] for OUT in [OUTLETS[s["outlet"]]]}
     check("3", "The Kandy plan carries every category", {"Fresh", "Style", "Tech"} <= {k[0] for k in kinds},
@@ -179,6 +183,7 @@ with TestClient(app) as c:
     workshop_p = {v["source_id"] for v in pplan["vehicles"] if not v["active"]}
     ptrips, pveh, pdef = audit("3 Peliyagoda", pplan, pclosed["orders_confirmed"], workshop_p)
     avoidable("3 Peliyagoda", pplan, ptrips, pveh, pdef, workshop_p)
+    certificate("3 Peliyagoda", pplan, ptrips, pdef, workshop_p)
     mall = [t for t in ptrips if any(OUTLETS[s["outlet"]]["mall_window"] for s in t["stops"])]
     check("3", "Peliyagoda mall outlets are served inside their mall window", bool(mall),
           f"{len(mall)} trips to mall outlets, e.g. {mall[0]['veh']} {[s['outlet'] for s in mall[0]['stops']]}" if mall else "")
@@ -295,6 +300,16 @@ with TestClient(app) as c:
     check("6", "It cannot be moved twice", r.status_code == 409, r.text[:80])
     r = c.post(f"{API}/dispatch/orders/{part_order[0]}/requeue", json={}, headers=DSP)
     check("6", "A delivered order cannot be moved", r.status_code == 409, r.text[:80])
+    day_list = ok(c.get(f"{API}/dispatch/orders", params={"date": day}, headers=DSP))
+    ids = [o["order_id"] for o in day_list["orders"]]
+    moved_rows = [o for o in day_list["moved_away"] if o["order_id"] == failed_order[0]]
+    check("6", "Orders list: every order of the day once, the failed one shown as moved with the driver's reason",
+          len(ids) == len(set(ids)) and failed_order[0] not in ids and bool(moved_rows) and moved_rows[0]["moved_kind"] == "requeued_after_failure",
+          f"{len(ids)} orders on {day}, {len(day_list['moved_away'])} moved away · {moved_rows[0]['moved_reason'] if moved_rows else '-'}")
+    detail = ok(c.get(f"{API}/dispatch/orders/{part_order[0]}", headers=DSP))
+    check("6", "An order opens with its lines and its outlet's delivery window",
+          len(detail["lines"]) == detail["line_count"] > 0 and detail["outlet"] is not None and detail["delivery_outcome"] == "delivered_in_part",
+          f"{part_order[1]}: {len(detail['lines'])} lines, windows {detail['outlet']['windows']}")
 
     print("\n7 · STORE MANAGERS CONFIRM WHAT ARRIVED")
     so = ok(c.get(f"{API}/store/orders", headers=STORE["OUT077"]))
@@ -317,11 +332,15 @@ with TestClient(app) as c:
         check("8", f"{co['depot']}: the run is complete and every order is accounted for", co["state"] == "complete" and co["not_yet"] == 0,
               f"{co['delivered']} delivered · {co['delivered_in_part']} some missing · {co['not_delivered']} not delivered · "
               f"{co['confirmed_by_store']} confirmed by stores · of {total}")
-        bad = [v for v in co["fuel"] if v["quota_l"] is not None and abs(float(v["used_week_l"]) - planned_fuel.get(v["vehicle_id"], 0)) > 0.05]
+        # used_week_l comes rounded to 0.1 L, the routes' sum to 0.01 L: they can differ by half a step (59.65 vs 59.7).
+        bad = [v for v in co["fuel"] if v["quota_l"] is not None
+               and abs(float(v["used_week_l"]) - planned_fuel.get(v["vehicle_id"], 0)) > 0.05 + 1e-6]
         over = [v for v in co["fuel"] if v["left_week_l"] is not None and float(v["left_week_l"]) < 0]
         check("8", f"{co['depot']}: fuel used this week = the day's route fuel, and no vehicle is over its quota", not bad and not over,
               f"{len(co['fuel'])} vehicles · e.g. {co['fuel'][0]['source_id']} {co['fuel'][0]['today_l']} L today, "
-              f"{co['fuel'][0]['left_week_l']} L of {co['fuel'][0]['quota_l']} L left")
+              f"{co['fuel'][0]['left_week_l']} L of {co['fuel'][0]['quota_l']} L left"
+              + "".join(f" · MISMATCH {v['source_id']} used {v['used_week_l']} L, routes {planned_fuel.get(v['vehicle_id'], 0):.2f} L"
+                        for v in bad))
     led = ok(c.get(f"{API}/dispatch/ledger", headers=DSP))
     check("8", "Records hold both depots: deliveries, deferrals and the moved order", {x["depot"] for x in led["records"]} == {"Kandy", "Peliyagoda"}
           and any(x["record_type"] == "deferral" and x["outcome"] != "deferred" for x in led["records"]),

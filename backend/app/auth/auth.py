@@ -1,4 +1,5 @@
 """Clerk sign-in (the deployed app): verify the Clerk session token the web app sends."""
+import logging
 from functools import lru_cache
 
 import httpx
@@ -10,6 +11,7 @@ from jwt import PyJWKClient
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -28,13 +30,21 @@ async def get_current_token_payload(credentials: HTTPAuthorizationCredentials | 
     token = credentials.credentials
     try:
         signing_key = _jwks_client().get_signing_key_from_jwt(token)
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
             issuer=settings.CLERK_ISSUER or None,
             audience=settings.CLERK_AUDIENCE,
-            options={"verify_aud": settings.CLERK_AUDIENCE is not None},
+            options={"verify_aud": settings.CLERK_AUDIENCE is not None, "require": ["exp", "iat", "sub"]},
         )
     except (jwt.PyJWTError, httpx.HTTPError) as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {exc}") from exc
+        # The reason goes to the log, not to the caller: it would help someone probing with forged tokens.
+        logger.info("Rejected Clerk token: %s", exc)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your sign-in is not valid; sign in again") from exc
+    # Clerk session tokens name the site they were issued to ("azp"). Only our own web app's tokens count,
+    # not a token another application on the same Clerk instance obtained.
+    if settings.CLERK_AUTHORIZED_PARTIES and payload.get("azp") not in settings.CLERK_AUTHORIZED_PARTIES:
+        logger.info("Rejected Clerk token for authorized party %r", payload.get("azp"))
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your sign-in is not valid; sign in again")
+    return payload

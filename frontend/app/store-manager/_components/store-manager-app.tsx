@@ -4,6 +4,7 @@ import { CheckSquare, ClipboardList, ShoppingCart } from "lucide-react";
 import { useState } from "react";
 import { AccountButton } from "@/components/waypoint/account-button";
 import { BrandMonogram } from "@/components/waypoint/data";
+import { DemoClockBar } from "@/components/waypoint/demo-clock";
 import { Logo } from "@/components/waypoint/logo";
 import { Banner, SyncIndicator } from "@/components/waypoint/status";
 import { useApiData } from "@/lib/api/use-api";
@@ -72,6 +73,7 @@ export function StoreManagerApp() {
   return (
     <div className="flex min-h-screen flex-col bg-wp-surface-2 text-[13px] leading-[18px] text-wp-text md:p-4">
       <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col bg-wp-canvas md:flex-none md:overflow-hidden md:rounded-lg md:border md:border-wp-border">
+        <DemoClockBar />
         <header className="sticky top-0 z-20 flex min-h-14 items-center gap-x-4 border-b border-wp-border bg-wp-surface px-4 md:static md:px-6">
           <div className="flex min-w-0 items-center gap-3 py-2">
             <Logo className="h-6 md:h-7" />

@@ -22,6 +22,8 @@ data/training/
 data/test/
 data/submission/
 check_allocation.py
+# Our Datathon models and the history built from the training data (scripts/install_lateness_model.py).
+backend/models/
 
 # ---------- Node / Next.js (frontend) ----------
 node_modules/
@@ -91,3 +93,7 @@ desktop.ini
 !.vscode/settings.json
 # Claude Code local tool settings (launch configs, permissions)
 .claude/
+
+
+models/
+submissions/

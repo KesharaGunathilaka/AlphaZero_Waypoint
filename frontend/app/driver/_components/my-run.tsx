@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { SpareBadge, minutesText, spareMinutes } from "@/components/waypoint/time-window";
+import { useNow } from "@/lib/clock";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BRAND_CLASS, DISPATCHER, UNLOAD_LABEL, navigationUrl } from "./data";
@@ -32,14 +34,43 @@ export function shortLoads(stop: RunStop) {
   );
 }
 
+/** Planned driving to a stop: from the depot, or from the stop before once it is unloaded. */
+function driveMinutes(trip: { depart_at: string; stops: RunStop[] }, stop: RunStop) {
+  const i = trip.stops.indexOf(stop);
+  const prev = trip.stops[i - 1];
+  const from = prev ? Date.parse(prev.planned_arrival) + Number(prev.service_minutes) * 60_000 : Date.parse(trip.depart_at);
+  return Math.max(0, Math.round((Date.parse(stop.planned_arrival) - from) / 60_000));
+}
+
 /**
  * My run. Built around one question a driver has all day: "what do I do now?"
  * The answer is a single big button at the bottom (Start trip, I'm here, Deliver), the stop it is about
  * is shown in large type above it, and everything else (map, problem, call) is one row of plain buttons.
  */
+/** Messages from dispatch not yet acknowledged: on every screen the driver rests on, not only the run. */
+export function DispatchMessages({ instructions, onSeen }: {
+  instructions: ReturnType<typeof useRun>["instructions"]; onSeen: ReturnType<typeof useRun>["seeInstruction"];
+}) {
+  return (
+    <>
+      {instructions.map((i) => (
+        <div key={i.instruction_id} className="flex flex-col gap-2 rounded-xl border-2 border-wp-info bg-wp-info-tint p-3 text-wp-info">
+          <div className="text-[13px] font-semibold">MESSAGE FROM DISPATCH</div>
+          <div className="text-[18px] leading-6 font-bold">{i.text ?? i.type.replaceAll("_", " ")}</div>
+          <button type="button" onClick={() => onSeen(i)}
+                  className="flex min-h-12 cursor-pointer items-center justify-center rounded-[10px] bg-wp-info font-semibold text-wp-surface">
+            OK, got it
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => void }) {
   const { run, error, currentTrip, currentStop, instructions, seeInstruction, records, isSent, depart, arrive } = useRun();
-  const [showStops, setShowStops] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const now = useNow();
 
   if (!run) {
     return (
@@ -82,14 +113,12 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
   const short = stop ? shortLoads(stop) : [];
   const loaded = currentTrip.state === "loaded" || currentTrip.departed;
 
-  // The one next step.
-  let step: { label: string; sub?: string; onClick: () => void };
-  if (!currentTrip.departed) {
-    step = {
-      label: "Start trip",
-      sub: loaded ? "Van is loaded. Tap when you drive off." : "Still loading at the dock. Tap when you drive off.",
-      onClick: () => depart(currentTrip),
-    };
+  // The one next step. Before the loader releases the van there is nothing to start: the button waits.
+  let step: { label: string; sub?: string; onClick: () => void; waiting?: boolean };
+  if (!currentTrip.departed && !loaded) {
+    step = { label: "Waiting for the loader", sub: "The button opens when the van is released to you.", onClick: () => {}, waiting: true };
+  } else if (!currentTrip.departed) {
+    step = { label: "Start trip", sub: "Van is loaded and released. Tap when you drive off.", onClick: () => depart(currentTrip) };
   } else if (stop && !stop.arrivedAt) {
     step = { label: "I’m here", sub: `Tap when you reach ${stop.outlet.code}`, onClick: () => { arrive(stop); onNavigate("deliver"); } };
   } else if (stop) {
@@ -103,16 +132,7 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
       <RunHeader />
       <Body className="gap-3">
         <OfflineBanner />
-        {instructions.map((i) => (
-          <div key={i.instruction_id} className="flex flex-col gap-2 rounded-xl border-2 border-wp-info bg-wp-info-tint p-3 text-wp-info">
-            <div className="text-[13px] font-semibold">MESSAGE FROM DISPATCH</div>
-            <div className="text-[18px] leading-6 font-bold">{i.text ?? i.type.replaceAll("_", " ")}</div>
-            <button type="button" onClick={() => seeInstruction(i)}
-                    className="flex min-h-12 cursor-pointer items-center justify-center rounded-[10px] bg-wp-info font-semibold text-wp-surface">
-              OK, got it
-            </button>
-          </div>
-        ))}
+        <DispatchMessages instructions={instructions} onSeen={seeInstruction} />
 
         {stop ? (
           <Card className="gap-2">
@@ -125,13 +145,21 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
             <div className="text-[26px] leading-[30px] font-bold">{stop.outlet.name}</div>
             <div className="flex items-end gap-6">
               <div>
-                <div className="text-[13px] text-wp-muted">Arrive by</div>
-                <div className="text-[40px] leading-[42px] font-bold">{stop.closes?.slice(0, 5) ?? "—"}</div>
+                <div className="text-[13px] text-wp-muted">Planned</div>
+                <div className="text-[40px] leading-[42px] font-bold">{formatTime(stop.planned_arrival)}</div>
               </div>
               <div className="pb-1">
-                <div className="text-[13px] text-wp-muted">Plan</div>
-                <div className="text-[20px] font-semibold">{formatTime(stop.planned_arrival)}</div>
+                <div className="text-[13px] text-wp-muted">Window</div>
+                <div className="text-[20px] font-semibold">
+                  {stop.opens && stop.closes ? `${stop.opens.slice(0, 5)}–${stop.closes.slice(0, 5)}` : stop.closes ? `to ${stop.closes.slice(0, 5)}` : "—"}
+                </div>
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[14px] text-wp-text-2">
+              {/* On the road and already past the planned time: spare counts from now, not from the plan. */}
+              <SpareBadge spare={spareMinutes(currentTrip.departed && now.getTime() > Date.parse(stop.planned_arrival) ? now.toISOString() : stop.planned_arrival,
+                                              stop.closes)} className="text-[13px]" />
+              {!stop.arrivedAt && <span>≈ {minutesText(driveMinutes(currentTrip, stop))} drive {stop.seq === 1 ? "from the depot" : "from the last stop"}</span>}
             </div>
             <div className="text-[16px]">
               Unload: <b>{UNLOAD_LABEL[stop.outlet.unload]}</b>
@@ -155,22 +183,33 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
           </Card>
         )}
 
+        {/* The stops still to do are always in view, with the drive to each; done stops fold away. */}
         <div className="flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-wp-border bg-wp-surface">
-          <button type="button" onClick={() => setShowStops(!showStops)} aria-expanded={showStops}
-                  className="flex min-h-[52px] cursor-pointer items-center justify-between px-4 text-left">
-            <span className="font-semibold">✓ {done.length} of {currentTrip.stops.length} stops done</span>
-            <span className="text-[13px] text-wp-text-2">
-              {waiting ? `${waiting} ${waiting === 1 ? "delivery" : "deliveries"} not sent · ` : ""}{showStops ? "Hide" : "Show all"}
-            </span>
-          </button>
-          {showStops && currentTrip.stops.map((s) => (
+          <div className="flex min-h-[48px] items-center justify-between px-4">
+            <span className="font-semibold">{currentTrip.stops.length - done.length} stops to go · {done.length} done</span>
+            {done.length > 0 && (
+              <button type="button" onClick={() => setShowDone(!showDone)} aria-expanded={showDone}
+                      className="cursor-pointer text-[13px] font-semibold text-wp-focus underline">
+                {showDone ? "Hide done" : "Show done"}
+              </button>
+            )}
+          </div>
+          {waiting > 0 && (
+            <div className="border-t border-wp-border px-4 py-2 text-[13px] text-wp-text-2">
+              {waiting} {waiting === 1 ? "delivery" : "deliveries"} saved on the phone, not sent yet
+            </div>
+          )}
+          {currentTrip.stops.filter((s) => showDone || s.status !== "done").map((s) => (
             <div key={s.stop_id}
-                 className={cn("flex min-h-[52px] items-center justify-between border-t border-wp-border px-4",
+                 className={cn("flex min-h-[52px] items-center justify-between gap-3 border-t border-wp-border px-4",
                                s.status === "current" && "bg-wp-info-tint font-bold")}>
-              <span>
+              <span className="min-w-0">
                 {s.status === "done" ? "✓" : s.status === "current" ? "➤" : "○"} {s.seq}. {s.outlet.name}
+                {s.status !== "done" && (
+                  <span className="block text-[12px] font-normal text-wp-text-2">≈ {minutesText(driveMinutes(currentTrip, s))} drive</span>
+                )}
               </span>
-              <span className={cn("text-[13px]", s.status !== "current" && "text-wp-text-2")}>
+              <span className={cn("flex-shrink-0 text-right text-[13px]", s.status !== "current" && "text-wp-text-2")}>
                 {s.status === "done"
                   ? Object.values(s.outcomes).map((o) => (o === "delivered" ? "Delivered" : o === "delivered_in_part" ? "Some missing" : "Not delivered")).join(", ")
                   : formatTime(s.planned_arrival)}
@@ -181,10 +220,18 @@ export function MyRun({ onNavigate }: { onNavigate: (screen: DriverScreen) => vo
       </Body>
 
       <BottomBar className="flex flex-col gap-2">
-        <BigButton className="h-16 w-full flex-col gap-0 text-[20px]" onClick={step.onClick}>
-          {step.label}
+        <BigButton className="h-16 w-full flex-col gap-0 text-[20px]" onClick={step.onClick} disabled={step.waiting}>
+          {step.waiting ? "⏳ " : ""}{step.label}
           {step.sub && <span className="text-[12px] font-normal opacity-90">{step.sub}</span>}
         </BigButton>
+        {step.waiting && (
+          <button type="button" className="cursor-pointer text-[13px] text-wp-text-2 underline"
+                  onClick={() => {
+                    if (window.confirm("Start the trip before the loader has released the van? Only do this if the dock told you to.")) depart(currentTrip);
+                  }}>
+            Loader can’t release it? Start anyway
+          </button>
+        )}
         <div className="grid grid-cols-3 gap-2">
           {stop ? (
             <BigLink variant="plain" className="h-12 text-[14px]" href={navigationUrl(stop)} target="_blank" rel="noreferrer">🧭 Map</BigLink>

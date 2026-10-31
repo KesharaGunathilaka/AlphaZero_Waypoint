@@ -38,7 +38,9 @@ FROM wp.app_user WHERE active AND {where}
 
 
 async def _clerk_email(clerk_user_id: str) -> str | None:
-    """Primary email of a Clerk user, read once to link a new sign-in to its wp.app_user row."""
+    """Primary email of a Clerk user, read once to link a new sign-in to its wp.app_user row. Only a verified
+    address counts: otherwise anyone who can create a Clerk account with a staff member's email could take
+    over that staff member's Waypoint account."""
     secret = settings.CLERK_SECRET_KEY.get_secret_value()
     if not secret:
         return None
@@ -52,7 +54,8 @@ async def _clerk_email(clerk_user_id: str) -> str | None:
     data = res.json()
     for entry in data.get("email_addresses") or []:
         if entry.get("id") == data.get("primary_email_address_id"):
-            return entry.get("email_address")
+            verified = (entry.get("verification") or {}).get("status") == "verified"
+            return entry.get("email_address") if verified else None
     return None
 
 

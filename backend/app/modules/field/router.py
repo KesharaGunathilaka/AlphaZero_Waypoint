@@ -32,13 +32,13 @@ class EventIn(BaseModel):
     type: EventType
     route_id: int | None = None
     stop_id: int | None = None
-    payload: dict[str, Any] = {}
+    payload: dict[str, Any] = Field(default_factory=dict, max_length=50)
     device_time: datetime  # when it happened on the device (kept as the fact's time)
 
 
 class SyncIn(BaseModel):
     device_id: UUID
-    label: str = "Browser"
+    label: str = Field(default="Browser", max_length=80)
     client_now: datetime
     events: list[EventIn] = Field(default_factory=list, max_length=500)
 
@@ -59,7 +59,10 @@ async def loader_routes(user: Loader, db: DbSession):
     """Trips of released plans still to load or leave, earliest departure first, and plan changes
     the dock has not acknowledged yet (opening the vehicle acknowledges them with a plan_ack event)."""
     routes = await rows(db, """
-        SELECT rb.*, v.source_id AS vehicle_source_id, pv.released_at AS plan_released_at
+        SELECT rb.*, v.source_id AS vehicle_source_id, pv.released_at AS plan_released_at,
+               (SELECT count(*) FROM stop s JOIN stop_order so ON so.stop_id = s.stop_id AND so.removed_at IS NULL
+                  JOIN order_header h ON h.order_id = so.order_id
+                 WHERE s.route_id = rb.route_id AND s.removed_at IS NULL AND h.temp = 'chilled') AS chilled_orders
         FROM route_board rb JOIN vehicle v ON v.vehicle_id = rb.vehicle_id
         LEFT JOIN plan_version pv ON pv.plan_id = rb.plan_id AND pv.version = rb.plan_version
         WHERE rb.depot_id = :d AND rb.plan_version > 0 AND rb.state IN ('planned', 'loading', 'loaded')
@@ -83,11 +86,15 @@ async def load_list(route_id: int, user: Loader, db: DbSession):
     if route is None:
         raise not_found("Route")
     route["lines"] = await rows(db, """
-        SELECT ll.*, s.planned_arrival, p.unit_weight_kg, p.unit_volume_m3, f.qty AS flag_qty, f.note AS flag_note,
+        SELECT ll.*, s.planned_arrival, w.opens AS window_opens, w.closes AS window_closes, p.unit_weight_kg,
+               p.unit_volume_m3, p.high_value, f.qty AS flag_qty, f.note AS flag_note,
                (SELECT count(*) FROM attachment a WHERE a.flag_id = ll.flag_id) AS flag_photos
         FROM load_list ll JOIN stop s ON s.stop_id = ll.stop_id JOIN product p ON p.sku = ll.sku
         LEFT JOIN flag f ON f.flag_id = ll.flag_id
-        WHERE ll.route_id = :r ORDER BY ll.load_order, ll.stop_id, ll.order_id, ll.line_no""", {"r": route_id})
+        LEFT JOIN LATERAL (SELECT min(x.opens) AS opens, max(x.closes) AS closes FROM outlet_window x
+                           WHERE x.outlet_id = s.outlet_id AND x.isodow = EXTRACT(isodow FROM CAST(:day AS date))::smallint) w ON true
+        WHERE ll.route_id = :r ORDER BY ll.load_order, ll.stop_id, ll.order_id, ll.line_no""",
+        {"r": route_id, "day": route["service_date"]})
     return route
 
 
@@ -130,8 +137,12 @@ async def driver_run(user: Driver, db: DbSession):
                (SELECT name FROM depot WHERE depot_id = u.depot_id) AS depot
         FROM app_user u LEFT JOIN vehicle v ON v.vehicle_id = u.vehicle_id LEFT JOIN vehicle_class c ON c.class_id = v.class_id
         WHERE u.user_id = :u""", {"u": user.user_id})
+    signers: dict[str, list[str]] = {}
+    for r in await rows(db, "SELECT outlet_code, name FROM usual_signers(:u)", {"u": user.user_id}):
+        if len(signers.setdefault(r["outlet_code"], [])) < 3:
+            signers[r["outlet_code"]].append(r["name"])
     return {"driver": me, "plans": [p for p in plans if p["routes"]], "deliveries": done, "route_states": routes,
-            "loaded": loaded, "windows": windows, "instructions": instructions,
+            "loaded": loaded, "windows": windows, "instructions": instructions, "signers": signers,
             "server_time": await scalar(db, "SELECT now()")}
 
 
@@ -165,6 +176,34 @@ async def sync(body: SyncIn, user: FieldUser, db: DbSession):
 
 
 # ----------------------------------------------------------- attachments ----
+MAX_FILE_BYTES = 5 * 1024 * 1024
+
+
+def image_type(data: bytes) -> str | None:
+    """The image type from the file's own first bytes, never from what the browser claims (a page could
+    otherwise store HTML or SVG and have it served back as a document)."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"hevc", b"mif1", b"msf1", b"heif"):
+        return "image/heic"
+    return None
+
+
+# What the uploader must own: the driver's own delivery, a flag they raised, an issue on their outlet's order.
+_OWNS = {
+    "delivery_id": "SELECT 1 FROM delivery WHERE delivery_id = :id AND (driver_id = :u OR :admin)",
+    "flag_id": "SELECT 1 FROM flag WHERE flag_id = :id AND (raised_by = :u OR :admin)",
+    "issue_id": """SELECT 1 FROM receipt_issue i JOIN order_header h ON h.order_id = i.order_id
+                   WHERE i.issue_id = :id AND (h.outlet_id = CAST(:outlet AS integer) OR :admin)""",
+}
+
+
 @router.post("/attachments", status_code=201)
 async def upload(
     user: CurrentUserDep,
@@ -178,35 +217,67 @@ async def upload(
     device_time: datetime | None = Form(None),
 ):
     """Proof-of-delivery photo or signature, a flag photo, or a store issue photo (uploaded after the
-    event it belongs to has synced). Re-uploading the same attachment_id is a no-op."""
-    data = await file.read()
-    if not data or len(data) > 5 * 1024 * 1024:
+    event it belongs to has synced). Re-uploading the same attachment_id by its uploader is a no-op."""
+    links = {k: v for k, v in (("delivery_id", delivery_id), ("flag_id", flag_id), ("issue_id", issue_id)) if v}
+    if len(links) != 1:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Attach the file to one delivery, flag or issue")
+    ((link, link_id),) = links.items()
+    if kind == "signature" and link != "delivery_id":
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A signature belongs to a delivery")
+    data = await file.read(MAX_FILE_BYTES + 1)
+    if not data or len(data) > MAX_FILE_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Files up to 5 MB")
+    content_type = image_type(data)
+    if content_type is None:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            "Photos and signatures only (JPEG, PNG, WebP, GIF or HEIC)")
+    if await one(db, _OWNS[link], {"id": link_id, "u": user.user_id, "outlet": user.outlet_id,
+                                   "admin": user.role == "admin"}) is None:
+        raise not_found("Delivery, flag or issue")
+
     aid = attachment_id or uuid4()
     key = f"attachments/{aid}"
-    content_type = file.content_type or "application/octet-stream"
-    await storage.put(db, key, data, content_type)
+    digest = hashlib.sha256(data).hexdigest()
+    existing = await one(db, "SELECT uploaded_by, sha256, storage_key FROM attachment WHERE attachment_id = :a",
+                         {"a": aid})
+    if existing is not None:
+        # A resend after a dropped connection: same person, same file. Anything else may not replace it.
+        if existing["uploaded_by"] != user.user_id or existing["sha256"] != digest:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This file is already stored and cannot be replaced")
+        return {"attachment_id": aid, "url": await storage.view_url(str(aid), existing["storage_key"])}
+
     await rows(db, """
         INSERT INTO attachment(attachment_id, kind, delivery_id, flag_id, issue_id, storage_key, content_type, bytes,
                                sha256, uploaded_by, device_time)
         VALUES (:a, :k, :d, :f, :i, :key, :ct, :n, :h, :u, COALESCE(:dt, now()))
         ON CONFLICT (attachment_id) DO NOTHING RETURNING 1""",
         {"a": aid, "k": kind, "d": delivery_id, "f": flag_id, "i": issue_id, "key": key,
-         "ct": content_type, "n": len(data),
-         "h": hashlib.sha256(data).hexdigest(), "u": user.user_id, "dt": device_time})
+         "ct": content_type, "n": len(data), "h": digest, "u": user.user_id, "dt": device_time})
+    await storage.put(db, key, data, content_type)  # only once the record is accepted: no orphan or replaced files
     await db.commit()
     return {"attachment_id": aid, "url": await storage.view_url(str(aid), key)}
 
 
 @router.get("/attachments/{attachment_id}")
 async def view(attachment_id: UUID, user: CurrentUserDep, db: DbSession):
-    """A short-lived link to show the image (an <img> tag cannot send the sign-in token)."""
-    row = await one(db, "SELECT attachment_id, kind, content_type, storage_key FROM attachment WHERE attachment_id = :a",
-                    {"a": attachment_id})
+    """A short-lived link to show the image (an <img> tag cannot send the sign-in token), only for people
+    who may see the delivery, flag or issue it belongs to."""
+    row = await one(db, """
+        SELECT a.attachment_id, a.kind, a.content_type, a.storage_key FROM attachment a
+        LEFT JOIN delivery d ON d.delivery_id = a.delivery_id
+        LEFT JOIN flag f ON f.flag_id = a.flag_id
+        LEFT JOIN receipt_issue i ON i.issue_id = a.issue_id
+        WHERE a.attachment_id = :a
+          AND (a.uploaded_by = :u OR can_see_order(d.order_id) OR can_see_route(f.route_id)
+               OR can_see_order(i.order_id))""",
+        {"a": attachment_id, "u": user.user_id})
     if row is None:
         raise not_found("Attachment")
     return {"attachment_id": attachment_id, "kind": row["kind"], "content_type": row["content_type"],
             "url": await storage.view_url(str(attachment_id), row["storage_key"])}
+
+
+_SAFE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic"}
 
 
 @router.get("/attachments/{attachment_id}/raw", include_in_schema=False)
@@ -218,7 +289,53 @@ async def raw(attachment_id: UUID, expires: int, signature: str, db: DbSession):
     data = await storage.get(db, row["storage_key"]) if row else None
     if data is None:
         raise not_found("Attachment")
-    return Response(content=data, media_type=row["content_type"], headers={"Cache-Control": "private, max-age=3600"})
+    # Never rendered as a page: an image, or else a download; no scripts, nothing embedded.
+    media = row["content_type"] if row["content_type"] in _SAFE_TYPES else "application/octet-stream"
+    return Response(content=data, media_type=media, headers={
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": f'{"inline" if media in _SAFE_TYPES else "attachment"}; filename="{attachment_id}"',
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })
+
+
+# ----------------------------------------------------------------- clock ----
+def demo_controls_allowed() -> bool:
+    """Demo controls (reset, demo clock) exist only for the Docker delivery and local test runs."""
+    s = get_settings()
+    return s.AUTH_MODE == "local" or (s.AUTH_DEV_BYPASS and s.ENVIRONMENT == "development")
+
+
+@router.get("/clock")
+async def clock(user: CurrentUserDep, db: DbSession):  # noqa: ARG001  (signed-in users only)
+    """The time the apps work to: real time, or the demo clock when the demo runs on the delivery morning."""
+    row = await one(db, "SELECT now() AS real_now, app_now() AS now, "
+                        "COALESCE(setting_int('demo_clock_offset_seconds'), 0) AS offset_seconds")
+    return {**row, "demo_controls": demo_controls_allowed()}
+
+
+class DemoClockIn(BaseModel):
+    at: datetime | None = None                                    # the clock shows this time now
+    advance_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+    real_time: bool = False
+
+
+@router.post("/demo/clock")
+async def demo_clock(body: DemoClockIn, user: Annotated[CurrentUser, Depends(require_roles("dispatcher"))], db: DbSession):
+    """Demo only: set the demo clock (jump to a time, move it on, or back to real time)."""
+    if not demo_controls_allowed():
+        raise not_found("Page")
+    current = int(await scalar(db, "SELECT COALESCE(setting_int('demo_clock_offset_seconds'), 0)"))
+    if body.real_time:
+        offset = 0
+    elif body.at is not None:
+        offset = int(await scalar(db, "SELECT round(extract(epoch FROM CAST(:at AS timestamptz) - now()))", {"at": body.at}))
+    elif body.advance_minutes:
+        offset = current + body.advance_minutes * 60
+    else:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Say when: at, advance_minutes or real_time")
+    await rows(db, "UPDATE setting SET value = :v WHERE key = 'demo_clock_offset_seconds' RETURNING 1", {"v": str(offset)})
+    await db.commit()
+    return await clock(user, db)
 
 
 # ------------------------------------------------------------------ demo ----
@@ -228,8 +345,7 @@ async def demo_reset(user: Annotated[CurrentUser, Depends(require_roles("dispatc
 
     Only for the Docker delivery (local sign-in) and local test runs: the deployed app (Clerk) never wipes its data.
     """
-    s = get_settings()
-    if s.AUTH_MODE != "local" and not (s.AUTH_DEV_BYPASS and s.ENVIRONMENT == "development"):
+    if not demo_controls_allowed():
         raise not_found("Page")
     result = await scalar(db, "SELECT demo_reset()")
     await db.commit()

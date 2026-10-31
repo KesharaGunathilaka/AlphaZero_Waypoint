@@ -216,7 +216,8 @@ def audit(part: str, plan: dict, orders_in_run: int, workshop: set[str]):
 
 
 def avoidable(part: str, plan: dict, trips, by_veh, deferred, workshop: set[str]):
-    """Could a deferred order have gone on any trip, or on a vehicle's free trip slot, without breaking a rule?"""
+    """Could a deferred order have gone on any trip, or on a vehicle's free trip slot, without breaking a rule?
+    One order at a time only: optimality.certificate() asks whether any plan at all serves more."""
     day = date.fromisoformat(plan["plan"]["service_date"])
     depot = {1: "Peliyagoda", 2: "Kandy"}[plan["plan"]["depot_id"]]
     found = []
@@ -279,13 +280,15 @@ def avoidable(part: str, plan: dict, trips, by_veh, deferred, workshop: set[str]
                         found.append(f"{u['outlet_code']} {u['temp']} -> {veh_id} new trip")
             if found and found[-1].startswith(u["outlet_code"] + " " + u["temp"]):
                 break
-    check(part, "No deferral was avoidable (single-order search over every trip and free vehicle slot)",
-          not found, ", ".join(found) if found else f"{len(deferred)} deferral(s) confirmed unavoidable")
+    check(part, "No deferred order fits on its own (single-order search over every trip and free vehicle slot)",
+          not found, ", ".join(found) if found else f"none of {len(deferred)} deferral(s) fits on its own")
 
 
 # ---------------------------------------------------------------- direct database helper ----
 def db_url() -> str:
-    url = os.environ["DATABASE_URL"]
+    # Test set-up (seeding users and orders, reading any order) needs the owner; the API under test keeps
+    # DATABASE_URL, which should be the restricted waypoint_api role. Falls back to DATABASE_URL.
+    url = os.environ.get("ADMIN_DATABASE_URL") or os.environ["DATABASE_URL"]
     return url.split("?")[0].replace("postgresql+asyncpg://", "postgresql://")
 
 

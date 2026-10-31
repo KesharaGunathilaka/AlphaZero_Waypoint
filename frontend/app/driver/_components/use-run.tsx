@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { shrinkImage, useApiData } from "@/lib/api/use-api";
+import { appNow } from "@/lib/clock";
 import { useOutbox } from "@/lib/offline/outbox";
 import type { DriverRun, LocalRecord, Outcome, SnapshotOrder, SnapshotRoute, SnapshotStop } from "./data";
 
@@ -116,7 +117,7 @@ function useRunState() {
       if (trip.departed) return;
       outbox.enqueue({ type: "depart", route_id: trip.route_id, payload: {} });
       setDepartures((d) => {
-        const next = { ...d, [trip.route_id]: new Date().toISOString() };
+        const next = { ...d, [trip.route_id]: appNow().toISOString() };
         writeJson(DEPARTURES, next);
         return next;
       });
@@ -129,7 +130,7 @@ function useRunState() {
       if (arrivals[stop.stop_id]) return;
       const trip = trips.find((t) => t.route_id === stop.routeId);
       if (trip) depart(trip); // arriving at a stop means the trip has left the depot
-      const at = new Date().toISOString();
+      const at = appNow().toISOString();
       outbox.enqueue({ type: "arrive", route_id: stop.routeId, stop_id: stop.stop_id, payload: {} });
       setArrivals((a) => {
         const next = { ...a, [stop.stop_id]: at };

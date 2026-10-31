@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { formatTime } from "@/lib/format";
 import type { DriverScreen } from "./driver-nav";
+import { DispatchMessages } from "./my-run";
 import { BigButton, Body, BottomBar, Card, OfflineBanner, PhoneScreen, SectionLabel, SyncPill, TopBar } from "./phone-ui";
 import { useRun, type RunTrip } from "./use-run";
 
@@ -26,7 +27,7 @@ function tally(trip: RunTrip) {
 
 /** R1 · Route complete: how the trip finished, and what the driver does next. */
 export function RouteComplete({ onNavigate }: { onNavigate: (screen: DriverScreen) => void }) {
-  const { trips, records, isSent, depart, run } = useRun();
+  const { trips, records, isSent, depart, run, instructions, seeInstruction } = useRun();
   const [dayOpen, setDayOpen] = useState(false);
   const finished = [...trips].reverse().find((t) => t.done) ?? null;
   const next = trips.find((t) => !t.done) ?? null;
@@ -43,6 +44,7 @@ export function RouteComplete({ onNavigate }: { onNavigate: (screen: DriverScree
       </TopBar>
       <Body>
         <OfflineBanner />
+        <DispatchMessages instructions={instructions} onSeen={seeInstruction} />
         {finished && (
           <Card>
             <SectionLabel>TRIP {trips.indexOf(finished) + 1} DONE</SectionLabel>

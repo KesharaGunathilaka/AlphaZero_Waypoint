@@ -4,7 +4,8 @@ The engine plans, the database validates, and this script checks the result a th
 it recomputes every rule straight from data/general/*.csv (not from the database's functions), so a
 bug shared by the engine and the schema still shows up here.
 
-  Part A  Kandy demo day: engine plan audited rule by rule, plus a "was any deferral avoidable?" search.
+  Part A  Kandy demo day: engine plan audited rule by rule, a single-order "does it fit anywhere?" search, and an
+          exact search (optimality.py) for any legal plan that serves more orders.
   Part B  Peliyagoda peak day (every outlet orders, two refrigerated vehicles in the workshop): same audit.
   Part C  Breaking the rules by hand (manual moves, departures, deferrals): each one must be refused.
   Part D  Cutoff and operating days, release, deferral record + store notice, deferred orders first next run.
@@ -25,6 +26,7 @@ from datetime import date, datetime, time, timedelta
 from booklet_audit import (API, BRAND, CALENDAR, COLOMBO, OUTLETS, VEHICLES, audit, avoidable, check, local, ok,
                            results, sql, trip_minutes)
 from fastapi.testclient import TestClient
+from optimality import certificate
 
 from app.main import app
 
@@ -81,6 +83,7 @@ with TestClient(app) as c:
     print(f"  {kday}: {closed['orders_confirmed']} orders, workshop: {sorted(workshop_k)}")
     ktrips, kveh, kdef = audit("A", kplan, closed["orders_confirmed"], workshop_k)
     avoidable("A", kplan, ktrips, kveh, kdef, workshop_k)
+    certificate("A", kplan, ktrips, kdef, workshop_k)
     van057 = sorted((t for t in ktrips if t["veh"] == "VEH057"), key=lambda t: t["seq"])
     check("A", "Day 5 worked example reproduced (VEH057 two Fresh chilled van trips, OUT078 deferred)",
           [[s["outlet"] for s in t["stops"]] for t in van057] == [["OUT077", "OUT083", "OUT079"], ["OUT076", "OUT082", "OUT081"]]
@@ -102,6 +105,7 @@ with TestClient(app) as c:
     print(f"  {pday}: {closed_p['orders_confirmed']} orders (seeded {n_orders}), workshop: {sorted(workshop_p)}")
     ptrips, pveh, pdef = audit("B", pplan, closed_p["orders_confirmed"], workshop_p)
     avoidable("B", pplan, ptrips, pveh, pdef, workshop_p)
+    certificate("B", pplan, ptrips, pdef, workshop_p)
     check("B", "A dispatcher working on Kandy cannot open a Peliyagoda plan",
           c.get(f"{API}/dispatch/plans/{ppid}", headers=KANDY_DSP).status_code == 404)
     # Planning office: the dispatcher plans both depots by switching; single-depot accounts cannot switch.
