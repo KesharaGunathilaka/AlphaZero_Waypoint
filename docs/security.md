@@ -3,7 +3,7 @@
 How the API and database protect Waypoint's data, what changed in the October 2026 security pass, and
 how each protection is tested. Branch `frontend_v2`; the changes are not committed yet.
 
-**Proof:** `backend/tests/security_audit.py` attacks every protection below (56 checks, all pass), and the
+**Proof:** `backend/tests/security_audit.py` attacks every protection below (61 checks, all pass), and the
 existing suites (`rules_audit`, `day_scenario`, `walkthrough`) pass with the API on the restricted role.
 
 ---
