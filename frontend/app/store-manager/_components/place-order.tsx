@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Stepper } from "@/components/waypoint/controls";
 import { Banner, StatusPill } from "@/components/waypoint/status";
 import { errorMessage, useApi, useApiData } from "@/lib/api/use-api";
+import { useNow } from "@/lib/clock";
 import { formatDay, formatDayTime, plural, timeLeft } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { categoryName, type OrderSlot, type Outlet, type Product, type StoreOrder, type Temp } from "./data";
@@ -55,6 +56,8 @@ export function PlaceOrder({
   const usual = useApiData<{ product_id: number; qty: number }[]>(editing ? null : `/store/usual?temp=${temp}`);
   const slot = useApiData<OrderSlot>(`/store/order-slot?temp=${temp}`);
   const existing = useApiData<StoreOrder[]>(!editing && slot.data?.existing_order_id ? "/store/orders" : null);
+  const last = useApiData<{ delivery_date: string | null; lines: { product_id: number; qty: number }[] }>(`/store/last-order?temp=${temp}`);
+  useNow(); // re-render the cutoff countdown (cutoffs run on real time, not the demo clock)
 
   const draftKey = `wp-order-draft-${outlet.code}-${temp}`;
   const catalogue = useMemo(() => products.data ?? [], [products.data]);
@@ -223,7 +226,7 @@ export function PlaceOrder({
         <div className="flex min-w-0 flex-col gap-4">
           <section className={cn(storeLayout.card, "flex flex-col gap-3 p-4")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-[15px] font-semibold">{category}</h2>
+              <h2 className="text-[15px] font-semibold">Items</h2>
               <button
                 type="button"
                 onClick={() => setQty(baseline)}
@@ -236,6 +239,7 @@ export function PlaceOrder({
               {editing
                 ? "Pre-filled from what is on this order now. Change only what differs."
                 : "Pre-filled from your usual order. Change only what differs."}
+              {last.data?.delivery_date ? ` “Last” is what came on ${formatDay(last.data.delivery_date)}.` : ""}
             </div>
             <input
               type="search"
@@ -257,13 +261,15 @@ export function PlaceOrder({
                   <div className="min-w-40 flex-1">
                     <div className="text-[13px] font-semibold">{line.name}</div>
                     <div className="text-[11px] text-wp-muted">
-                      {editing ? "Now" : "Usual"} {baseline[index] ?? 0} · per {line.unit}
+                      {editing ? "Now" : "Usual"} {baseline[index] ?? 0}
+                      {last.data?.delivery_date ? ` · last ${Number(last.data.lines.find((l) => l.product_id === line.product_id)?.qty ?? 0)}` : ""} · per {line.unit}
                       {values[index] !== baseline[index] && (
                         <span className="ml-2 font-semibold text-wp-action">Changed to {values[index]}</span>
                       )}
                     </div>
                   </div>
                   <Stepper
+                    hideLabel
                     label={line.name}
                     value={values[index] ?? 0}
                     onChange={(v) => setQty(values.map((x, j) => (j === index ? Math.max(0, v) : x)))}

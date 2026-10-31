@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { appNow } from "@/lib/clock";
+import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   FLAG_TYPES,
@@ -31,7 +33,7 @@ function gaugeFill(percent: number) {
 
 /** The time a flag was sent. Only ever called from a click, so never on the server. */
 function clockTime() {
-  return new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return formatTime(appNow());
 }
 
 const STOP_TONE = {
@@ -55,6 +57,15 @@ function stopTone(stop: LoadStop): keyof typeof STOP_TONE {
 }
 
 const STOP_ICON = { good: "✓", warn: "▲", open: "●", idle: "○" } as const;
+
+/** The cold chain applies: one clear badge, the same on the queue and on each stop. */
+export function ChilledBadge({ className }: { className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full bg-wp-info px-2.5 py-0.5 text-[13px] font-bold text-wp-surface", className)}>
+      <span aria-hidden="true">❄</span> Chilled
+    </span>
+  );
+}
 
 /** L2 · Load list: loads the last stop first, with a per-line flag sheet. */
 export function LoadList({
@@ -108,8 +119,9 @@ export function LoadList({
           </button>
           <div>
             <div className="text-3xl leading-8 font-bold">{vehicle.label}</div>
-            <div className="text-base font-medium text-wp-text-2">
+            <div className="flex flex-wrap items-center gap-2 text-base font-medium text-wp-text-2">
               {vehicle.type} · departs {vehicle.departs}
+              {vehicle.chilled && <ChilledBadge />}
             </div>
           </div>
         </div>
@@ -248,9 +260,11 @@ function StopCard({
             <b>Stop {stop.stop}</b> · {stop.outlet}
             {!open && ` · ${stop.unload}`}
           </span>
+          {stop.chilled && <ChilledBadge className="ml-2 align-middle" />}
           {open && (
             <span className="block text-base font-normal text-wp-text-2">
-              Unloading: {stop.unload} · deliver by {stop.deliverBy} · {progress.confirmed} of {progress.lines} lines
+              Unloading: {stop.unload} · planned {stop.planned}
+              {stop.windowCloses ? ` · window to ${stop.windowCloses}` : ""} · {progress.confirmed} of {progress.lines} lines
             </span>
           )}
         </span>
@@ -324,8 +338,13 @@ function LineRow({ line, onToggle, onFlag }: { line: LoadLine; onToggle: () => v
         <div className="text-[24px] leading-7 font-bold">{line.units}</div>
         <div className="text-[12px] text-wp-text-2">{line.unit}</div>
       </div>
-      <div className="min-w-0 flex-1 text-[17px] font-semibold">{line.product}</div>
-      <span className="hidden rounded-md border border-wp-border px-2 py-1 text-[13px] text-wp-text-2 sm:inline">{line.tag}</span>
+      <div className="min-w-0 flex-1 text-[17px] font-semibold">
+        {line.chilled && <span aria-label="Chilled" className="mr-1.5 text-wp-info">❄</span>}
+        {line.product}
+      </div>
+      {line.tags.map((t) => (
+        <span key={t} className="rounded-md border border-wp-warn px-2 py-1 text-[13px] font-semibold text-wp-warn">{t}</span>
+      ))}
       <button
         type="button"
         aria-label={`Flag ${line.product}`}
@@ -349,7 +368,9 @@ function FlaggedLine({ line, onEditFlag }: { line: LoadLine; onEditFlag: () => v
         <div className="flex-1">
           <b>{line.product}</b> · {flagSummary(line)}
         </div>
-        <span className="rounded-md border border-wp-warn px-2 py-1 text-[13px] text-wp-text">{line.tag}</span>
+        {line.tags.map((t) => (
+          <span key={t} className="rounded-md border border-wp-warn px-2 py-1 text-[13px] text-wp-text">{t}</span>
+        ))}
         <TabletPill tone="warn" className="bg-wp-surface">
           ▲ {flagLabel(line)}
         </TabletPill>

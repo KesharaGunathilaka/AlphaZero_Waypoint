@@ -8,6 +8,8 @@ __pycache__
 Dockerfile
 README.md
 tests
+# The lateness model is derived from competition data: mounted at run time, never baked into the image.
+models
 # Env files never go into the image: docker-compose.yml passes every setting the container needs.
 .env
 .env.*

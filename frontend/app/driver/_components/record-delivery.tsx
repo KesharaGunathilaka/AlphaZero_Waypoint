@@ -102,7 +102,8 @@ function DeliveryForm({
   onBack: () => void;
   onSaved: (record: LocalRecord) => void;
 }) {
-  const { saveDelivery } = useRun();
+  const { run, saveDelivery } = useRun();
+  const usual = run?.signers?.[stop.outlet.code] ?? [];
   const lines = order.lines ?? [];
   const loadedOf = (lineNo: number) => stop.loaded[`${order.order_id}-${lineNo}`];
 
@@ -242,6 +243,18 @@ function DeliveryForm({
                 <input aria-label="Received by" value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)}
                        placeholder="Name" className="min-w-0 flex-1 bg-transparent text-base text-wp-text outline-none" />
               </div>
+              {usual.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[13px] text-wp-text-2">Usually signs here:</span>
+                  {usual.map((name) => (
+                    <button key={name} type="button" onClick={() => setReceivedBy(name)} aria-pressed={receivedBy === name}
+                            className={cn("min-h-10 cursor-pointer rounded-full border px-4 text-[15px] font-semibold",
+                                          receivedBy === name ? "border-wp-action bg-wp-action text-wp-on-action" : "border-wp-border bg-wp-surface")}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <SignaturePad value={signature} onChange={setSignature} />
               {addPhoto}
             </Card>

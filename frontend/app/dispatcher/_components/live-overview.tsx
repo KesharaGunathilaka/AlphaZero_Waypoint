@@ -3,35 +3,44 @@
 import { ChevronLeft, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/waypoint/controls";
-import { StatusPill } from "@/components/waypoint/status";
+import { StatusPill, TONES } from "@/components/waypoint/status";
 import { formatDay, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { BRAND_NAME, type FleetRow, type Monitor, type RunProgress } from "./data";
-import { AttentionRow, MovedToday, TripStops, dots, vehicleStatus, type LiveActions } from "./live-monitor";
+import { BRAND_NAME, exceptionTone, type FleetRow, type Monitor, type RunProgress } from "./data";
+import { LaneTimeline, type Lane, type LaneBar } from "./lane-timeline";
+import { ModelNote } from "./late-risk";
+import { AttentionList, MovedToday, TripStops, aheadRisk, dots, vehicleStatus, type LiveActions } from "./live-monitor";
 
-/** Where a trip is, for the charts: one bucket each, worst first. */
-type Bucket = "nosignal" | "attention" | "road" | "depot" | "back";
+/**
+ * Where a trip is, for the charts: one bucket each, worst first. Red is kept for a critical problem (a failed
+ * delivery, a driver's report, a store that can't receive late); amber for anything flagged or running late;
+ * hatched grey for no signal, because we don't know.
+ */
+type Bucket = "problem" | "nosignal" | "attention" | "road" | "depot" | "back";
+const HATCH = "bg-[repeating-linear-gradient(45deg,var(--wp-offline-tint),var(--wp-offline-tint)_5px,var(--wp-surface)_5px,var(--wp-surface)_10px)]";
 const BUCKETS: { key: Bucket; label: string; color: string; bar: string }[] = [
-  { key: "nosignal", label: "No signal", color: "var(--wp-offline)", bar: "bg-wp-offline-tint border-wp-offline border-dashed" },
+  { key: "problem", label: "Problem", color: "var(--wp-crit)", bar: "bg-wp-crit-tint border-wp-crit" },
+  { key: "nosignal", label: "No signal", color: "var(--wp-offline)", bar: `${HATCH} border-wp-offline border-dashed` },
   { key: "attention", label: "Needs attention", color: "var(--wp-warn)", bar: "bg-wp-warn-tint border-wp-warn" },
   { key: "road", label: "On the road", color: "var(--wp-info)", bar: "bg-wp-info-tint border-wp-info" },
   { key: "depot", label: "At the depot", color: "var(--wp-border)", bar: "bg-wp-surface-2 border-wp-border" },
   { key: "back", label: "Back, done", color: "var(--wp-good)", bar: "bg-wp-good-tint border-wp-good" },
 ];
 const FILL: Record<Bucket, string> = {
-  nosignal: "bg-wp-offline/50", attention: "bg-wp-warn/45", road: "bg-wp-info/45", depot: "bg-wp-muted/30", back: "bg-wp-good/45",
+  problem: "bg-wp-crit/40", nosignal: "bg-wp-offline/35", attention: "bg-wp-warn/45", road: "bg-wp-info/45", depot: "bg-wp-muted/30",
+  back: "bg-wp-good/45",
 };
 
 function bucket(f: FleetRow): Bucket {
+  if (f.worst === "crit") return "problem";
   if (f.no_signal) return "nosignal";
-  if (f.exception_count > 0) return "attention";
+  if (f.worst === "warn") return "attention";
   if (f.state === "on_the_way") return "road";
   if (f.state === "complete") return "back";
   return "depot";
 }
 
 type Detail = { kind: "trip"; routeId: number; from?: Detail } | { kind: "district"; name: string };
-const HOUR = 3_600_000;
 const label = "text-[10px] font-semibold tracking-[.06em] text-wp-muted uppercase";
 
 /**
@@ -73,7 +82,8 @@ export function LiveOverview({ m, actions, showDepot, onView }: {
       <div className={cn("grid shrink-0 gap-3", m.runs.length > 1 && "xl:grid-cols-2")}>
         {m.runs.map((run) => (
           <DepotStrip key={run.run_id} run={run} trips={m.fleet.filter((f) => f.run_id === run.run_id)}
-                      attention={m.exceptions.filter((e) => e.depot === run.depot).length} onView={onView} />
+                      attention={m.exceptions.filter((e) => e.depot === run.depot).length}
+                      critical={m.exceptions.some((e) => e.depot === run.depot && e.severity === "crit")} onView={onView} />
         ))}
       </div>
 
@@ -82,11 +92,7 @@ export function LiveOverview({ m, actions, showDepot, onView }: {
         <Panel title={`Needs attention · ${m.exceptions.length}`} action={<Button variant="link" onClick={() => onView("trips")}>All trips</Button>}
                className="max-h-[480px] lg:max-h-none">
           <MovedToday actions={actions} />
-          {m.exceptions.length === 0 && <div className="py-2 text-wp-text-2">Nothing needs attention right now.</div>}
-          {m.exceptions.map((e, i) => (
-            <AttentionRow key={`${e.kind}-${e.flag_id ?? e.route_id ?? i}-${e.stop_id ?? ""}-${e.order_id ?? ""}`} e={e} actions={actions}
-                          showDepot={showDepot} compact onOpen={e.route_id ? () => openTrip(e.route_id!) : undefined} />
-          ))}
+          <AttentionList exceptions={m.exceptions} actions={actions} showDepot={showDepot} compact onOpen={openTrip} />
         </Panel>
       </div>
 
@@ -96,7 +102,7 @@ export function LiveOverview({ m, actions, showDepot, onView }: {
         <FuelWatch m={m} onView={onView} />
       </div>
 
-      {detail && <Drawer m={m} detail={detail} showDepot={showDepot} onOpen={openTrip} onSet={setDetail} />}
+      {detail && <Drawer m={m} detail={detail} showDepot={showDepot} named={actions.named} onOpen={openTrip} onSet={setDetail} />}
     </div>
   );
 }
@@ -131,8 +137,8 @@ function Ring({ value, total, size = 64 }: { value: number; total: number; size?
   );
 }
 
-function DepotStrip({ run, trips, attention, onView }: {
-  run: RunProgress; trips: FleetRow[]; attention: number; onView: (v: "trips" | "day") => void;
+function DepotStrip({ run, trips, attention, critical, onView }: {
+  run: RunProgress; trips: FleetRow[]; attention: number; critical: boolean; onView: (v: "trips" | "day") => void;
 }) {
   const count = (b: Bucket) => trips.filter((f) => bucket(f) === b).length;
   const back = count("back");
@@ -152,6 +158,8 @@ function DepotStrip({ run, trips, attention, onView }: {
           </button>
         ) : run.state === "planned" ? (
           <span className="text-[11px] font-semibold text-wp-info">Not departed</span>
+        ) : run.state === "open" || run.state === "closed" ? (
+          <span className="text-[11px] font-semibold text-wp-info">Not planned yet</span>
         ) : null}
       </div>
       <div className="flex items-center gap-2">
@@ -177,7 +185,7 @@ function DepotStrip({ run, trips, attention, onView }: {
       </div>
       <div className="grid grid-cols-[auto_auto] gap-x-2 text-[12px] leading-[17px]">
         <Kpi name="Fresh at risk" value={run.fresh_at_risk} tone={run.fresh_at_risk > 0 ? "text-wp-crit" : ""} />
-        <Kpi name="Attention" value={attention} tone={attention > 0 ? "text-wp-warn" : ""} />
+        <Kpi name="Attention" value={attention} tone={critical ? "text-wp-crit" : attention > 0 ? "text-wp-warn" : ""} />
         <Kpi name="No signal" value={noSignal} tone={noSignal > 0 ? "text-wp-offline" : ""} />
       </div>
     </div>
@@ -199,58 +207,40 @@ function Kpi({ name, value, tone }: { name: string; value: number; tone: string 
 function Timeline({ m, showDepot, focus, selected, onOpen }: {
   m: Monitor; showDepot: boolean; focus: Bucket | null; selected: number | null; onOpen: (routeId: number) => void;
 }) {
-  const times = m.fleet.flatMap((f) => [Date.parse(f.depart_at), Date.parse(f.return_at ?? f.depart_at)]).filter(Number.isFinite);
-  if (times.length === 0) return <Panel title="Fleet today"><div className="text-wp-text-2">No trips yet.</div></Panel>;
-  const start = Math.min(...times) - HOUR / 4;
-  const end = Math.max(...times) + HOUR / 4;
-  const x = (t: number) => ((t - start) / (end - start)) * 100;
-  // Colombo is UTC+05:30 all year, so its whole hours fall on the half hour in UTC.
-  const ticks: number[] = [];
-  for (let t = Math.ceil((start - HOUR / 2) / HOUR) * HOUR + HOUR / 2; t <= end; t += HOUR) ticks.push(t);
   const now = Date.parse(m.server_time);
-  const showNow = now >= start && now <= end;
-  const groups = showDepot ? m.runs.map((r) => r.depot) : [null];
+  const today = formatDay(m.server_time);
+  const groups = showDepot ? m.runs.map((r) => r.depot) : [m.runs[0]?.depot ?? null];
 
   return (
     <Panel title="Fleet today · planned trips and stops done"
-           action={<span className="text-[11px] text-wp-text-2">{showNow ? `now ${formatTime(m.server_time)}` : `day of ${formatDay(m.runs[0].service_date)}`}</span>}
+           action={<span className="text-[11px] text-wp-text-2">{today} · {formatTime(m.server_time)}</span>}
            className="min-h-[420px] lg:min-h-0">
       <div className={cn("grid gap-x-5 gap-y-3 lg:h-full lg:min-h-0", groups.length > 1 && "xl:grid-cols-2")}>
         {groups.map((depot) => {
+          const run = m.runs.find((r) => r.depot === depot) ?? m.runs[0];
           const fleet = m.fleet.filter((f) => !depot || f.depot === depot);
-          const lanes = [...new Set(fleet.map((f) => f.vehicle_source_id))].sort();
+          const lanes: Lane[] = [...new Set(fleet.map((f) => f.vehicle_source_id))].sort().map((vehicle) => ({
+            key: vehicle,
+            label: vehicle,
+            bars: fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => tripBar(m, f, focus, selected, onOpen)),
+          }));
+          const day = run ? formatDay(run.service_date) : "";
+          const unplanned = run && (run.state === "open" || run.state === "closed");
           return (
             <div key={depot ?? "one"} className="flex min-h-0 flex-col">
-              {depot && <div className="mb-0.5 text-[12px] font-bold">{depot}</div>}
-              <div className="flex shrink-0 pl-[74px]">
-                <div className="relative h-4 flex-1 text-[10px] text-wp-muted">
-                  {ticks.map((t, i) => (
-                    <span key={t} className={cn("absolute -translate-x-1/2", i % 2 === 1 && "max-sm:hidden", i % 2 === 1 && groups.length > 1 && "xl:max-2xl:hidden")}
-                          style={{ left: `${x(t)}%` }}>{formatTime(new Date(t))}</span>
-                  ))}
-                </div>
+              <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
+                {showDepot && depot && <span className="text-[12px] font-bold">{depot}</span>}
+                {run && day !== today && <span className="text-[11px] text-wp-text-2">{day}{run.state === "complete" ? " · finished" : ""}</span>}
               </div>
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                <div className="pointer-events-none absolute inset-y-0 right-0 left-[74px]">
-                  {ticks.map((t) => <div key={t} className="absolute inset-y-0 border-l border-wp-border/60" style={{ left: `${x(t)}%` }} />)}
-                  {showNow && (
-                    <div className="absolute inset-y-0 z-10 border-l-2 border-wp-crit" style={{ left: `${x(now)}%` }}>
-                      <span className="absolute -top-0.5 -translate-x-1/2 rounded bg-wp-crit px-1 text-[9px] font-bold text-white">NOW</span>
-                    </div>
-                  )}
+              {unplanned ? (
+                <div className="rounded-md border border-dashed border-wp-border px-3 py-6 text-center text-[13px] text-wp-text-2">
+                  {day}: not planned yet. Build and send the plan on the Plan tab; its trips appear here.
                 </div>
-                {lanes.map((vehicle) => (
-                  <div key={vehicle} className="flex min-h-[18px] flex-1 items-center border-t border-wp-border/40 first:border-t-0 lg:max-h-[38px] lg:min-h-[14px]">
-                    <div className="w-[74px] shrink-0 truncate pr-2 text-[11px] font-semibold">{vehicle}</div>
-                    <div className="relative h-full flex-1">
-                      {fleet.filter((f) => f.vehicle_source_id === vehicle).map((f) => (
-                        <TripBar key={f.route_id} f={f} left={x(Date.parse(f.depart_at))} right={x(Date.parse(f.return_at ?? f.depart_at))}
-                                 dim={focus !== null && bucket(f) !== focus} selected={selected === f.route_id} onOpen={onOpen} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              ) : fleet.length === 0 ? (
+                <div className="text-wp-text-2">No trips yet.</div>
+              ) : (
+                <LaneTimeline lanes={lanes} now={run && day === today ? now : undefined} />
+              )}
             </div>
           );
         })}
@@ -259,26 +249,27 @@ function Timeline({ m, showDepot, focus, selected, onOpen }: {
   );
 }
 
-function TripBar({ f, left, right, dim, selected, onOpen }: {
-  f: FleetRow; left: number; right: number; dim: boolean; selected: boolean; onOpen: (routeId: number) => void;
-}) {
+function tripBar(m: Monitor, f: FleetRow, focus: Bucket | null, selected: number | null, onOpen: (routeId: number) => void): LaneBar {
   const b = bucket(f);
-  const style = BUCKETS.find((s) => s.key === b)!;
   const status = vehicleStatus(f);
-  const done = f.stops_total ? f.stops_done / f.stops_total : 0;
-  return (
-    <button type="button" onClick={() => onOpen(f.route_id)}
-            title={`${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}`}
-            aria-label={`${f.vehicle_source_id} trip ${f.route_seq}, ${f.district}, ${f.stops_done} of ${f.stops_total} stops, ${status.label}`}
-            className={cn("absolute top-[10%] bottom-[10%] flex cursor-pointer items-center overflow-hidden rounded border text-left transition-opacity",
-                          style.bar, dim && "opacity-25", selected && "ring-2 ring-wp-focus ring-offset-1")}
-            style={{ left: `${left}%`, width: `${Math.max(0.8, right - left)}%` }}>
-      <div className={cn("absolute inset-y-0 left-0", FILL[b])} style={{ width: `${done * 100}%` }} />
-      <span className="relative block truncate px-1 text-[10px] leading-none font-semibold">
-        {f.district} {f.stops_done}/{f.stops_total}
-      </span>
-    </button>
-  );
+  const late = aheadRisk(m, f.route_id);
+  const failed = m.stops.filter((s) => s.route_id === f.route_id && s.outcomes?.includes("not_delivered")).length;
+  return {
+    failed,
+    risk: late.likely ? "likely" : late.risk ? "risk" : undefined,
+    id: f.route_id,
+    start: Date.parse(f.depart_at),
+    end: Date.parse(f.return_at ?? f.depart_at),
+    text: `${f.district} ${f.stops_done}/${f.stops_total}`,
+    title: `${f.vehicle_source_id} trip ${f.route_seq} · ${f.district} · ${BRAND_NAME[f.brand_code]} · ${formatTime(f.depart_at)}–${formatTime(f.return_at)} · ${f.stops_done}/${f.stops_total} stops · ${status.label}${failed ? ` · ${failed} not delivered` : ""}${late.likely ? ` · ${late.likely} likely late ahead` : late.risk ? ` · ${late.risk} at risk ahead` : ""}`,
+    ariaLabel: `${f.vehicle_source_id} trip ${f.route_seq}, ${f.district}, ${f.stops_done} of ${f.stops_total} stops, ${status.label}`,
+    className: BUCKETS.find((s) => s.key === b)!.bar,
+    fillClassName: FILL[b],
+    fill: f.stops_total ? f.stops_done / f.stops_total : 0,
+    dim: focus !== null && b !== focus,
+    selected: selected === f.route_id,
+    onClick: () => onOpen(f.route_id),
+  };
 }
 
 // ------------------------------------------------------------- bottom charts ----
@@ -345,10 +336,10 @@ function StatusDonut({ fleet, focus, onFocus }: { fleet: FleetRow[]; focus: Buck
           <text x="50%" y="46%" dominantBaseline="central" textAnchor="middle" className="fill-wp-text text-[22px] font-bold">{fleet.length}</text>
           <text x="50%" y="62%" dominantBaseline="central" textAnchor="middle" className="fill-wp-text-2 text-[10px]">trips</text>
         </svg>
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col">
           {counts.map((b) => (
             <button key={b.key} type="button" onClick={() => onFocus(b.key)} aria-pressed={focus === b.key} disabled={b.n === 0}
-                    className={cn("flex cursor-pointer items-center gap-2 rounded px-1.5 py-0.5 text-left text-[12px] disabled:cursor-default disabled:opacity-50",
+                    className={cn("flex cursor-pointer items-center gap-2 rounded px-1.5 py-px text-left text-[12px] leading-[18px] disabled:cursor-default disabled:opacity-50",
                                   focus === b.key ? "bg-wp-surface-2 font-semibold" : "hover:bg-wp-surface-2")}>
               <span className="size-2.5 rounded-sm" style={{ background: b.color }} />
               <span>{b.label}</span>
@@ -393,8 +384,9 @@ function FuelWatch({ m, onView }: { m: Monitor; onView: (v: "trips" | "day") => 
 
 // ------------------------------------------------------------------- drawer ----
 
-function Drawer({ m, detail, showDepot, onOpen, onSet }: {
-  m: Monitor; detail: Detail; showDepot: boolean; onOpen: (routeId: number) => void; onSet: (d: Detail | null) => void;
+function Drawer({ m, detail, showDepot, named, onOpen, onSet }: {
+  m: Monitor; detail: Detail; showDepot: boolean; named: (text: string) => string; onOpen: (routeId: number) => void;
+  onSet: (d: Detail | null) => void;
 }) {
   let title: ReactNode;
   let body: ReactNode;
@@ -412,9 +404,10 @@ function Drawer({ m, detail, showDepot, onOpen, onSet }: {
           </span>
         </div>
         {m.exceptions.filter((e) => e.route_id === trip.route_id).map((e, i) => (
-          <div key={i} className="rounded-md bg-wp-warn-tint px-3 py-1.5 text-[12px] font-semibold text-wp-warn">{e.detail}</div>
+          <div key={i} className={cn("rounded-md px-3 py-1.5 text-[12px] font-semibold", TONES[exceptionTone(e)].className)}>{named(e.detail)}</div>
         ))}
-        <TripStops trip={trip} stops={m.stops.filter((s) => s.route_id === trip.route_id)} />
+        <TripStops trip={trip} stops={m.stops.filter((s) => s.route_id === trip.route_id)} lateness={m.lateness} />
+        {m.lateness && <ModelNote l={m.lateness} />}
       </>
     );
   } else {

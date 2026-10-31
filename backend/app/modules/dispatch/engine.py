@@ -11,9 +11,22 @@ Strategy (greedy, explainable):
   1. Scarcest resource first: van-only chilled, van-only ambient, other chilled, other ambient.
   2. Inside a pool, orders that were already deferred go first, then Fresh, then the earliest window
      close, then the largest order.
-  3. Each trip starts from the highest-priority order left in its brand + district group and takes the
-     vehicle that can carry the most of that group; stops are visited earliest window close first.
-  4. Whatever cannot be placed is drafted as a deferral with the reason the database suggests.
+  3. Each trip starts from the highest-priority order left in its brand + district group. Every vehicle
+     that can take that order offers a trip; the engine picks, in this order:
+       a. the trip that moves the most load, each order measured on its tighter dimension (weight or
+          volume) against the depot's largest vehicle, so a bulky Style load counts as much as a heavy
+          Tech one (big loads first, as in bin packing; ranking by order count did worse on real days),
+       b. among trips carrying the same load: a vehicle still inside its fuel pace for the day (below),
+       c. a vehicle that is not a van or reefer doing work any vehicle could do,
+       d. the vehicle the trip fills most on its tightest resource: weight, volume or the day's time budget
+          (best fit: a vehicle with a short gap left takes the short trip, whole vehicles stay free).
+     A vehicle's second trip may go before its first one: a far trip early, while the morning is free, and
+     the local trip after it. Stops are visited earliest window close first.
+  4. Fuel pace: the weekly quota is a hard limit (checked here and again in the database). On top of it,
+     each vehicle's fair share for the day is the fuel left this week divided by the operating days left,
+     today included. It only decides between vehicles that would carry the same orders, so it never costs
+     an order today; it keeps one busy day from emptying a vehicle's quota for the rest of the week.
+  5. Whatever cannot be placed is drafted as a deferral with the reason the database suggests.
 """
 
 from dataclasses import dataclass, field
@@ -61,18 +74,17 @@ class Vehicle:
     max_kg: float
     max_m3: float
     km_per_l: float
-    fuel_left: float
+    fuel_left: float  # litres left this week (hard limit), after this plan's trips so far
     driver_id: int | None
-    trips: list = field(default_factory=list)  # (fresh?, minutes, end datetime)
+    fuel_pace: float = float("inf")  # litres this vehicle should use today (soft), set by propose()
+    fuel_today: float = 0.0  # litres of this plan's trips so far
+    trips: list["Trip"] = field(default_factory=list, repr=False, compare=False)  # this plan's trips (at most two)
 
     def fresh_minutes(self):
-        return sum(m for fresh, m, _ in self.trips if fresh)
+        return sum(t.minutes for t in self.trips if t.fresh)
 
     def day_minutes(self):
-        return sum(m for fresh, m, _ in self.trips if not fresh)
-
-    def free_at(self):
-        return max((end for _, _, end in self.trips), default=None)
+        return sum(t.minutes for t in self.trips if not t.fresh)
 
     def can_carry(self, o: Order) -> bool:
         return (self.reefer or o.temp == "ambient") and (self.is_van or not o.van_only)
@@ -94,6 +106,12 @@ class Trip:
     minutes: int
     end: datetime
     stops: list[tuple[int, datetime]]  # (outlet_id, planned arrival)
+    # Set when this trip goes before the vehicle's existing trip: (that trip, its new depart, stops, end).
+    moves: tuple | None = None
+
+    @property
+    def fresh(self) -> bool:
+        return self.orders[0].brand == "F"
 
 
 class Planner:
@@ -106,35 +124,27 @@ class Planner:
     def at(self, t: time) -> datetime:
         return datetime.combine(self.day, t, COLOMBO)
 
-    def simulate(self, v: Vehicle, orders: list[Order]) -> Trip | None:
-        """Trip for these orders on this vehicle, or None if any booklet rule fails."""
-        if not orders or len(v.trips) >= 2:
-            return None
-        if any(not v.can_carry(o) for o in orders):
-            return None
-        if sum(o.kg for o in orders) > v.max_kg or sum(o.m3 for o in orders) > v.max_m3:
-            return None
-        d = self.districts[orders[0].district_id]
-        fresh = orders[0].brand == "F"
-        n = len(orders)
-        minutes = d.outbound_min + d.inter_min * (n - 1) + sum(self.allowance[(o.brand_id, o.unload)] for o in orders)
-        if fresh and v.fresh_minutes() + minutes > self.fresh_budget:
-            return None
-        if not fresh and v.day_minutes() + minutes > self.day_budget:
-            return None
-        fuel = (2 * d.outbound_km + d.inter_km * (n - 1)) / v.km_per_l  # route distance incl. the return
-        if fuel > v.fuel_left:  # fuel_left already excludes this vehicle's earlier trips
-            return None
+    def litres(self, v: Vehicle, district_id: int, n_orders: int) -> float:
+        """Fuel for one trip: route distance (out, between stops, back) over the vehicle's km per litre."""
+        d = self.districts[district_id]
+        return (2 * d.outbound_km + d.inter_km * (n_orders - 1)) / v.km_per_l
 
+    def minutes(self, orders: list[Order]) -> int:
+        """Booklet trip minutes: outbound + inter-stop x (orders - 1) + handling allowance per order."""
+        d = self.districts[orders[0].district_id]
+        return d.outbound_min + d.inter_min * (len(orders) - 1) + sum(self.allowance[(o.brand_id, o.unload)] for o in orders)
+
+    def timeline(self, orders: list[Order], earliest: datetime | None):
+        """(depart, stops, end) for a trip leaving no earlier than `earliest`, or None if a window is missed."""
+        d = self.districts[orders[0].district_id]
         # Visit stops earliest window close first; one stop per outlet.
         by_outlet: dict[int, list[Order]] = {}
         for o in sorted(orders, key=lambda o: (o.closes or time(23, 59), o.opens or time(0))):
             by_outlet.setdefault(o.outlet_id, []).append(o)
         first = next(iter(by_outlet.values()))[0]
-        earliest = self.at(self.fresh_start) if fresh else self.at(time(0))
-        if v.free_at():
-            earliest = max(earliest, v.free_at())
-        depart = earliest
+        depart = self.at(self.fresh_start) if orders[0].brand == "F" else self.at(time(0))
+        if earliest:
+            depart = max(depart, earliest)
         if first.opens:  # leave so the vehicle reaches the first stop as it opens, not earlier
             depart = max(depart, self.at(first.opens) - timedelta(minutes=d.outbound_min))
 
@@ -151,8 +161,41 @@ class Planner:
             stops.append((outlet_id, t))
             t += timedelta(minutes=sum(self.allowance[(x.brand_id, x.unload)] for x in group)
                            + d.inter_min * (len(group) - 1))
-        end = max(t, depart + timedelta(minutes=minutes))
-        return Trip(v, orders, depart, minutes, end, stops)
+        return depart, stops, max(t, depart + timedelta(minutes=self.minutes(orders)))
+
+    def simulate(self, v: Vehicle, orders: list[Order]) -> Trip | None:
+        """Trip for these orders on this vehicle, or None if any booklet rule fails."""
+        if not orders or len(v.trips) >= 2:
+            return None
+        if any(not v.can_carry(o) for o in orders):
+            return None
+        if sum(o.kg for o in orders) > v.max_kg or sum(o.m3 for o in orders) > v.max_m3:
+            return None
+        fresh = orders[0].brand == "F"
+        minutes = self.minutes(orders)
+        if fresh and v.fresh_minutes() + minutes > self.fresh_budget:
+            return None
+        if not fresh and v.day_minutes() + minutes > self.day_budget:
+            return None
+        if self.litres(v, orders[0].district_id, len(orders)) > v.fuel_left:  # fuel_left excludes earlier trips
+            return None
+
+        if not v.trips:
+            timed = self.timeline(orders, None)
+            return Trip(v, orders, timed[0], minutes, timed[2], timed[1]) if timed else None
+        other = v.trips[0]
+        timed = self.timeline(orders, other.end)  # after the vehicle's trip
+        if timed:
+            return Trip(v, orders, timed[0], minutes, timed[2], timed[1])
+        # Before it: a far trip first while the morning is free, the earlier-planned trip moved to follow
+        # (a local trip has the slack to go later). Windows decide; the time budgets do not depend on order.
+        timed = self.timeline(orders, None)
+        if timed is None:
+            return None
+        moved = self.timeline(other.orders, timed[2])
+        if moved is None:
+            return None
+        return Trip(v, orders, timed[0], minutes, timed[2], timed[1], moves=(other, *moved))
 
     def fill(self, v: Vehicle, group: list[Order]) -> Trip | None:
         """Start with the first order of the group, then add every further order that still fits."""
@@ -167,50 +210,56 @@ class Planner:
                 return None  # this vehicle cannot even take the group's top order
         return best
 
+    def rank(self, trip: Trip, ref_kg: float, ref_m3: float) -> tuple:
+        """Sort key for the trips the vehicles offer for one group: smallest is chosen (rule 3 above)."""
+        v, orders = trip.vehicle, trip.orders
+        over_pace = v.fuel_today + self.litres(v, orders[0].district_id, len(orders)) > v.fuel_pace + 1e-9
+        wasted = (v.is_van and not any(o.van_only for o in orders)) + \
+                 (v.reefer and all(o.temp == "ambient" for o in orders))
+        load = sum(max(o.kg / ref_kg, o.m3 / ref_m3) for o in orders)
+        budget, used = (self.fresh_budget, v.fresh_minutes()) if trip.fresh else (self.day_budget, v.day_minutes())
+        fill = max(sum(o.kg for o in orders) / v.max_kg, sum(o.m3 for o in orders) / v.max_m3,
+                   (used + trip.minutes) / budget)
+        return (-round(load, 6), over_pace, wasted, -round(fill, 6), v.vehicle_id)
+
     def plan(self, orders: list[Order], vehicles: list[Vehicle]) -> tuple[list[Trip], list[Order]]:
         trips: list[Trip] = []
         left: list[Order] = []
+        # One yardstick for "how much load" across vehicles: the depot's largest weight and volume limits.
+        ref_kg = max((v.max_kg for v in vehicles), default=1.0)
+        ref_m3 = max((v.max_m3 for v in vehicles), default=1.0)
         for pool in range(4):
             groups: dict[tuple[str, int], list[Order]] = {}
             for o in sorted((o for o in orders if o.pool == pool), key=Order.priority):
                 groups.setdefault((o.brand, o.district_id), []).append(o)
             for group in sorted(groups.values(), key=lambda g: g[0].priority()):
                 while group:
-                    candidates = []
-                    for v in vehicles:
-                        trip = self.fill(v, group)
-                        if trip:
-                            served = sum(o.kg for o in trip.orders)
-                            # carry the most; then save vans and refrigerated vehicles for the work only they can do
-                            wasted = (v.is_van and not any(o.van_only for o in trip.orders)) + \
-                                     (v.reefer and all(o.temp == "ambient" for o in trip.orders))
-                            candidates.append((-served, wasted, v.max_kg, v.vehicle_id, trip))
-                    if not candidates:
+                    offers = [t for t in (self.fill(v, group) for v in vehicles) if t]
+                    if not offers:
                         left.append(group.pop(0))  # nothing can take the top order: it waits
                         continue
-                    trip = min(candidates, key=lambda c: c[:4])[4]
-                    trip.vehicle.trips.append((trip.orders[0].brand == "F", trip.minutes, trip.end))
-                    d = self.districts[trip.orders[0].district_id]
-                    trip.vehicle.fuel_left -= (2 * d.outbound_km + d.inter_km * (len(trip.orders) - 1)) / trip.vehicle.km_per_l
+                    trip = min(offers, key=lambda t: self.rank(t, ref_kg, ref_m3))
+                    v = trip.vehicle
+                    if trip.moves:  # it goes first: re-time the vehicle's other trip to follow it
+                        other, other.depart, other.stops, other.end = trip.moves
+                    v.trips.append(trip)
+                    fuel = self.litres(v, trip.orders[0].district_id, len(trip.orders))
+                    v.fuel_left -= fuel
+                    v.fuel_today += fuel
                     trips.append(trip)
                     taken = {o.order_id for o in trip.orders}
                     group[:] = [o for o in group if o.order_id not in taken]
         return trips, left
 
 
-async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
-    """Replace the plan's unreleased trips with the engine's proposal and draft deferrals for the rest."""
+async def load_inputs(db: AsyncSession, plan_id: int, with_vehicles: list[int] | None = None):
+    """Everything the engine needs for a plan: (plan, planner, order rows, vehicle rows). Vehicles are the depot's
+    active ones plus `with_vehicles` (a what-if: a vehicle back from the workshop). Fuel left excludes this plan's
+    own trips, so a draft being replaced does not count against itself."""
     plan = (await rows(db, "SELECT plan_id, run_id, depot_id, service_date, state FROM plan WHERE plan_id = :p",
                        {"p": plan_id}))[0]
-
-    # Start clean: drop this plan's draft trips and deferral drafts (orders return to the queue).
-    await rows(db, "DELETE FROM deferral_draft WHERE plan_id = :p RETURNING 1", {"p": plan_id})
-    await rows(db, "DELETE FROM stop_order WHERE plan_id = :p RETURNING 1", {"p": plan_id})
-    await rows(db, "DELETE FROM stop WHERE plan_id = :p RETURNING 1", {"p": plan_id})
-    await rows(db, "DELETE FROM route WHERE plan_id = :p RETURNING 1", {"p": plan_id})
-
     isodow = plan["service_date"].isoweekday()
-    orders = [Order(**r) for r in await rows(db, """
+    orders = await rows(db, """
         SELECT h.order_id, ou.outlet_id, ou.code AS outlet_code, b.code AS brand, b.brand_id, ou.district_id,
                h.temp::text AS temp, h.weight_kg::float AS kg, h.volume_m3::float AS m3, ou.van_only,
                ou.unload::text AS unload, w.opens, w.closes, h.deferral_count
@@ -218,15 +267,23 @@ async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
         LEFT JOIN LATERAL (SELECT min(opens) AS opens, max(closes) AS closes FROM outlet_window
                            WHERE outlet_id = ou.outlet_id AND isodow = :dow) w ON true
         WHERE h.run_id = :run AND h.status IN ('confirmed', 'planned')""",
-        {"run": plan["run_id"], "dow": isodow})]
-    vehicles = [Vehicle(**r) for r in await rows(db, """
+        {"run": plan["run_id"], "dow": isodow})
+    vehicles = await rows(db, """
         SELECT v.vehicle_id, v.code, c.is_van, c.carries_chilled AS reefer, v.max_weight_kg::float AS max_kg,
                v.max_volume_m3::float AS max_m3, v.km_per_l::float AS km_per_l,
-               COALESCE(fuel_left(v.vehicle_id, :p), 1e9)::float AS fuel_left,
-               (SELECT user_id FROM app_user u WHERE u.vehicle_id = v.vehicle_id AND u.active) AS driver_id
+               COALESCE(fuel_quota_for(v.vehicle_id, week_start(CAST(:d AS date)))
+                        - fuel_used_week(v.vehicle_id, week_start(CAST(:d AS date)), :p), 1e9)::float AS fuel_left,
+               (SELECT user_id FROM app_user u WHERE u.vehicle_id = v.vehicle_id AND u.active ORDER BY user_id LIMIT 1) AS driver_id
         FROM vehicle v JOIN vehicle_class c USING (class_id)
-        WHERE v.depot_id = :depot AND v.active ORDER BY v.vehicle_id""",
-        {"p": plan_id, "depot": plan["depot_id"]})]
+        WHERE v.depot_id = :depot AND (v.active OR v.vehicle_id IN (SELECT value::integer FROM jsonb_array_elements_text(CAST(:extra AS jsonb))))
+        ORDER BY v.vehicle_id""",
+        {"p": plan_id, "d": plan["service_date"], "depot": plan["depot_id"], "extra": with_vehicles or []})
+    # Operating days left in the plan's week (Monday to Sunday, from the calendar), today included.
+    days_left = int(await scalar(db, """
+        SELECT count(*) FROM generate_series(CAST(:d AS date), week_start(CAST(:d AS date)) + 6, interval '1 day') g
+        WHERE is_working_day(g::date)""", {"d": plan["service_date"]}))
+    for v in vehicles:
+        v["fuel_pace"] = v["fuel_left"] / max(days_left, 1)
     districts = {r["district_id"]: District(r["o"], r["i"], float(r["ok"]), float(r["ik"])) for r in await rows(db, """
         SELECT district_id, depot_to_district_freeflow_min AS o, inter_stop_freeflow_min AS i,
                depot_to_district_km AS ok, inter_stop_km AS ik FROM district""")}
@@ -235,9 +292,49 @@ async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
     budgets = (int(await scalar(db, "SELECT setting_int('fresh_budget_minutes')")),
                int(await scalar(db, "SELECT setting_int('daytime_budget_minutes')")),
                time.fromisoformat(await scalar(db, "SELECT value FROM setting WHERE key = 'fresh_window_start'")))
+    return plan, Planner(plan["service_date"], districts, allowance, budgets), orders, vehicles
 
-    planner = Planner(plan["service_date"], districts, allowance, budgets)
-    trips, left = planner.plan(orders, vehicles)
+
+def run_planner(planner: Planner, order_rows: list[dict], vehicle_rows: list[dict]) -> tuple[list[Trip], list[Order]]:
+    """One engine run on fresh copies (the planner records trips on its Vehicle objects)."""
+    return planner.plan([Order(**r) for r in order_rows], [Vehicle(**r) for r in vehicle_rows])
+
+
+async def what_if(db: AsyncSession, plan_id: int, order_id: int) -> dict:
+    """Would a vehicle in the workshop, back in service, let this order go? One engine run per suitable vehicle,
+    in memory: nothing is saved."""
+    plan, planner, orders, vehicles = await load_inputs(db, plan_id)
+    order = next((o for o in orders if o["order_id"] == order_id), None)
+    if order is None:
+        return {"order_id": order_id, "today": None, "options": []}
+    trips, left = run_planner(planner, orders, vehicles)
+    served_now = sum(len(t.orders) for t in trips)
+    workshop = await rows(db, """
+        SELECT v.vehicle_id, v.code, v.source_id, c.is_van, c.carries_chilled, v.max_weight_kg::float AS max_kg,
+               v.max_volume_m3::float AS max_m3
+        FROM vehicle v JOIN vehicle_class c USING (class_id)
+        WHERE v.depot_id = :depot AND NOT v.active ORDER BY v.vehicle_id""", {"depot": plan["depot_id"]})
+    options = []
+    for w in workshop:
+        suits = ((w["carries_chilled"] or order["temp"] == "ambient") and (w["is_van"] or not order["van_only"])
+                 and order["kg"] <= w["max_kg"] and order["m3"] <= w["max_m3"])
+        if not suits:
+            continue
+        _, planner2, orders2, vehicles2 = await load_inputs(db, plan_id, [w["vehicle_id"]])
+        trips2, left2 = run_planner(planner2, orders2, vehicles2)
+        options.append({"vehicle_id": w["vehicle_id"], "vehicle": w["source_id"],
+                        "serves_order": all(o.order_id != order_id for o in left2),
+                        "orders_served": sum(len(t.orders) for t in trips2), "orders_total": len(orders2)})
+    return {"order_id": order_id, "today": {"orders_served": served_now, "orders_total": len(orders)}, "options": options}
+
+
+async def propose(db: AsyncSession, plan_id: int, actor_id: int) -> dict:
+    """Replace the plan's unreleased trips with the engine's proposal and draft deferrals for the rest."""
+    # Start clean: drop this plan's draft trips and deferral drafts (orders return to the queue). The
+    # database does it after checking the role, the depot and that the plan is still a draft.
+    await scalar(db, "SELECT clear_plan_draft(:p, :u)", {"p": plan_id, "u": actor_id})
+    plan, planner, order_rows, vehicle_rows = await load_inputs(db, plan_id)
+    trips, left = run_planner(planner, order_rows, vehicle_rows)
 
     # Write the trips through the workflow functions, so every database rule is checked again.
     for trip in sorted(trips, key=lambda t: (t.vehicle.vehicle_id, t.depart)):

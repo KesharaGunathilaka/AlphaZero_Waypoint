@@ -44,10 +44,27 @@ END $$;
 -- available refrigerated van (VEH058 in the workshop) = 2,080 kg, so one order must wait.
 -- OUT077's dry order is left for the judge to place as the store manager.
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql AS $$
+-- Who may wipe the data: an owner session (psql, db/load.sh, the Docker init script) with no signed-in
+-- user, or a signed-in dispatcher or admin. The API's restricted role with no user is refused.
+CREATE OR REPLACE FUNCTION demo_reset_allowed() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = wp, pg_temp AS $$
+  SELECT CASE
+           WHEN wp.me() IS NOT NULL THEN COALESCE((SELECT role IN ('dispatcher', 'admin') FROM wp.app_user
+                                                   WHERE user_id = wp.me() AND active), false)
+           ELSE NOT pg_has_role(session_user, 'waypoint_app', 'MEMBER')
+                OR (SELECT rolsuper FROM pg_roles WHERE rolname = session_user)
+         END
+$$;
+REVOKE ALL ON FUNCTION demo_reset_allowed() FROM PUBLIC;
+
+-- Runs as the owner (TRUNCATE needs it); demo_reset_allowed() decides who may call it.
+CREATE OR REPLACE FUNCTION demo_reset() RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = wp, public, pg_temp AS $$
 DECLARE d date; pd date; dispatcher integer; admin integer; o record; n integer := 0; np integer := 0;
         kg numeric; m3 numeric; lines jsonb; base numeric;
 BEGIN
+  IF NOT wp.demo_reset_allowed() THEN
+    RAISE EXCEPTION 'WP010: only a dispatcher may reset the demo data' USING ERRCODE = 'WP010';
+  END IF;
   -- Wipe operational data first. TRUNCATE does not fire the append-only row triggers.
   TRUNCATE wp.attachment_blob, wp.attachment, wp.receipt_issue, wp.store_receipt, wp.delivery_line, wp.delivery,
            wp.stop_arrival, wp.load_confirmation, wp.route_release, wp.instruction, wp.flag, wp.plan_change_ack,
@@ -91,31 +108,59 @@ BEGIN
 
   -- Accounts. Emails are the sign-in names (Clerk links them by email on first sign-in).
   -- Local sign-in (Docker): every demo account's password is 'waypoint-demo' (bcrypt hash).
+  -- A vehicle has one driver: an older account on a demo vehicle (a test driver, say) steps aside.
+  UPDATE wp.app_user SET vehicle_id = NULL, active = false
+  WHERE vehicle_id IN (SELECT vehicle_id FROM wp.vehicle WHERE source_id IN ('VEH001', 'VEH057', 'VEH059', 'VEH060'))
+    AND email NOT IN ('driver.veh001@example.com', 'driver.veh057@example.com', 'driver.veh059@example.com',
+                      'driver.veh060@example.com');
   INSERT INTO wp.app_user(role, name, email, depot_id, outlet_id, vehicle_id, password_hash, all_depots)
   SELECT v.role::wp.user_role, v.name, v.email,
-         CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL ELSE (SELECT depot_id FROM wp.depot WHERE name = 'Kandy') END,
+         CASE WHEN v.role IN ('store_manager', 'admin') THEN NULL
+              ELSE (SELECT depot_id FROM wp.depot WHERE name = COALESCE(v.depot, 'Kandy')) END,
          (SELECT outlet_id FROM wp.outlet WHERE code = v.outlet),
          (SELECT vehicle_id FROM wp.vehicle WHERE source_id = v.vehicle),
          public.crypt('waypoint-demo', public.gen_salt('bf', 8)),
          v.role = 'dispatcher'   -- the planning-office dispatcher plans both depots (starts on Kandy)
   FROM (VALUES
-    ('dispatcher',    'Ruwan Perera',      'dispatcher@example.com',     NULL,     NULL),
-    ('loader',        'Kasun Jayasinghe',  'loader.kandy@example.com',   NULL,     NULL),
-    ('driver',        'Nuwan Bandara',     'driver.veh057@example.com',  NULL,     'VEH057'),
-    ('driver',        'Saman Kumara',      'driver.veh059@example.com',  NULL,     'VEH059'),
-    ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060'),
-    ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL),
-    ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL),
+    ('dispatcher',    'Ruwan Perera',      'dispatcher@example.com',     NULL,     NULL,     NULL),
+    ('loader',        'Kasun Jayasinghe',  'loader.kandy@example.com',   NULL,     NULL,     NULL),
+    ('driver',        'Nuwan Bandara',     'driver.veh057@example.com',  NULL,     'VEH057', NULL),
+    ('driver',        'Saman Kumara',      'driver.veh059@example.com',  NULL,     'VEH059', NULL),
+    ('driver',        'Pradeep Silva',     'driver.veh060@example.com',  NULL,     'VEH060', NULL),
+    ('store_manager', 'Fathima Rizwan',    'store.out077@example.com',   'OUT077', NULL,     NULL),
+    ('store_manager', 'Dilani Fernando',   'store.out078@example.com',   'OUT078', NULL,     NULL),
+    -- Peliyagoda runs its own delivery day too: a loader, a refrigerated-truck driver and a Fresh store on his trip.
+    ('loader',        'Tharaka Gunawardena', 'loader.peliyagoda@example.com', NULL, NULL,  'Peliyagoda'),
+    ('driver',        'Roshan Fernando',   'driver.veh001@example.com',  NULL,     'VEH001', 'Peliyagoda'),
+    ('store_manager', 'Sanduni Herath',    'store.out007@example.com',   'OUT007', NULL,     NULL),     -- Fresh, Colombo: VEH001's first stop
     -- Outlets the demo day leaves without an order, so each category can be ordered live:
-    ('store_manager', 'Ishara Wijesinghe', 'store.out102@example.com',   'OUT102', NULL),   -- Style, Matale (Kandy)
-    ('store_manager', 'Chamara Dissanayake', 'store.out103@example.com', 'OUT103', NULL),   -- Tech, Matale (Kandy)
-    ('store_manager', 'Nadeesha Perera',   'store.out018@example.com',   'OUT018', NULL),   -- Style, Colombo mall (Peliyagoda)
-    ('store_manager', 'Ravindu Silva',     'store.out022@example.com',   'OUT022', NULL),   -- Tech, Colombo mall (Peliyagoda)
-    ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL)
-  ) AS v(role, name, email, outlet, vehicle)
+    ('store_manager', 'Ishara Wijesinghe', 'store.out102@example.com',   'OUT102', NULL,     NULL),   -- Style, Matale (Kandy)
+    ('store_manager', 'Chamara Dissanayake', 'store.out103@example.com', 'OUT103', NULL,     NULL),   -- Tech, Matale (Kandy)
+    ('store_manager', 'Nadeesha Perera',   'store.out018@example.com',   'OUT018', NULL,     NULL),   -- Style, Colombo mall (Peliyagoda)
+    ('store_manager', 'Ravindu Silva',     'store.out022@example.com',   'OUT022', NULL,     NULL),   -- Tech, Colombo mall (Peliyagoda)
+    ('admin',         'Waypoint Admin',    'admin@example.com',          NULL,     NULL,     NULL)
+  ) AS v(role, name, email, outlet, vehicle, depot)
   ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = EXCLUDED.name, depot_id = EXCLUDED.depot_id,
     outlet_id = EXCLUDED.outlet_id, vehicle_id = EXCLUDED.vehicle_id, active = true, all_depots = EXCLUDED.all_depots,
     password_hash = COALESCE(wp.app_user.password_hash, EXCLUDED.password_hash);
+
+  -- Every vehicle has a driver (booklet: "Each vehicle has a driver"), so every trip shows who drives it.
+  -- Only the demo drivers above sign in; these have no password and are not listed on the sign-in page.
+  INSERT INTO wp.app_user(role, name, email, depot_id, vehicle_id)
+  SELECT 'driver',
+         (ARRAY['Asanka','Buddhika','Chaminda','Dhammika','Eranga','Gayan','Harsha','Indika','Janaka','Kapila',
+                'Lahiru','Mahesh','Nalin','Prasanna','Rohan','Sampath','Tharindu','Upul','Viraj','Waruna'])[1 + v.n % 20]
+         || ' ' ||
+         (ARRAY['Abeysekera','Bandara','Dias','Ekanayake','Gamage','Hettiarachchi','Jayasuriya','Karunaratne',
+                'Liyanage','Mendis','Nanayakkara','Pathirana','Ranasinghe','Senanayake','Tennakoon','Weerasinghe',
+                'Wickramasinghe'])[1 + (v.n * 7) % 17],
+         'driver.' || lower(v.source_id) || '@example.com', v.depot_id, v.vehicle_id
+  FROM (SELECT ve.*, substring(ve.source_id FROM 4)::integer AS n FROM wp.vehicle ve) v
+  WHERE NOT EXISTS (SELECT 1 FROM wp.app_user u WHERE u.vehicle_id = v.vehicle_id)
+  ON CONFLICT (email) DO NOTHING;
+
+  -- The demo clock starts on real time after every reset (007_finals.sql).
+  UPDATE wp.setting SET value = '0' WHERE key = 'demo_clock_offset_seconds';
 
   -- Day 5 assumption: VEH058 (refrigerated van, Kandy) is in the workshop; all others available.
   UPDATE wp.vehicle SET active = (source_id <> 'VEH058');
@@ -198,6 +243,11 @@ BEGIN
   FROM wp.outlet ou JOIN demo_catalogue c ON c.brand_id = ou.brand_id JOIN wp.product p ON p.sku = c.sku
   WHERE NOT EXISTS (SELECT 1 FROM wp.outlet_usual_line u WHERE u.outlet_id = ou.outlet_id AND u.temp = c.temp)
   ON CONFLICT DO NOTHING;
+
+  -- A week of finished days before today (007_finals.sql): history strips, Records, usual signers.
+  IF to_regproc('wp.seed_demo_history') IS NOT NULL THEN
+    PERFORM wp.seed_demo_history(5);
+  END IF;
 
   RETURN jsonb_build_object('service_date', d, 'orders', n,
                             'cutoff', wp.run_cutoff((SELECT depot_id FROM wp.depot WHERE name = 'Kandy'), d),

@@ -9,6 +9,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-waypoint}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
       POSTGRES_DB: ${POSTGRES_DB:-waypoint}
+      WAYPOINT_API_PASSWORD: ${WAYPOINT_API_PASSWORD:-waypoint-api-local}   # the API's login, created on first start
     ports:
       - "${DB_PORT:-5433}:5432"
     volumes:
@@ -31,18 +32,26 @@ services:
       ENVIRONMENT: development
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-waypoint}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
+      # The API connects as waypoint_api, a member of waypoint_app: not the owner, so row-level security
+      # and the append-only rules apply to it (db/migrations/006_least_privilege.sql).
+      POSTGRES_USER: waypoint_api
+      POSTGRES_PASSWORD: ${WAYPOINT_API_PASSWORD:-waypoint-api-local}
       POSTGRES_DB: ${POSTGRES_DB:-waypoint}
       ALLOWED_HOSTS: '["localhost", "127.0.0.1", "api"]'
       CORS_ORIGINS: '["http://localhost:${WEB_PORT:-3000}", "http://127.0.0.1:${WEB_PORT:-3000}"]'
       # Sign-in. "local" (default): the API checks the demo accounts' passwords itself, no outside
       # account needed. The deployed app uses Clerk (AUTH_MODE=clerk + the CLERK_* values).
       AUTH_MODE: ${AUTH_MODE:-local}
+      AUTO_CUTOFF_SECONDS: 60   # close orders at the 16:00 cutoff on the clock
       LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:-docker-local-only-secret-change-me-0123456789}
       CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
       CLERK_ISSUER: ${CLERK_ISSUER:-}
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      # Our Datathon Task 1 model (predicted lateness), installed into backend/models/task1 by
+      # backend/scripts/install_lateness_model.py. Not in the repository; without it the plan shows no predictions.
+      LATENESS_MODEL_DIR: /models/task1
+    volumes:
+      - ./backend/models/task1:/models/task1:ro
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

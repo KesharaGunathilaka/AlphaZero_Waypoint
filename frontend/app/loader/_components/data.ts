@@ -1,4 +1,5 @@
 import type { Tone } from "@/components/waypoint/status";
+import { clockTime } from "@/components/waypoint/time-window";
 import { formatTime } from "@/lib/format";
 
 // ------------------------------------------------------------- API shapes ----
@@ -24,6 +25,8 @@ export type RouteRow = {
   plan_version: number;
   plan_released_at?: string | null;
   service_date: string;
+  /** Orders on the trip that need the cold chain. */
+  chilled_orders: number;
 };
 
 export type PlanChangeRow = {
@@ -43,6 +46,8 @@ export type LoadLineRow = {
   outlet_name: string;
   unload: string;
   planned_arrival: string;
+  window_opens: string | null;
+  window_closes: string | null;
   order_id: number;
   confirmation_no: string;
   line_no: number;
@@ -52,6 +57,7 @@ export type LoadLineRow = {
   line_temp: string;
   fragile: boolean;
   hanging: boolean;
+  high_value: boolean;
   qty_loaded: number | null;
   line_state: "to_load" | "short" | "loaded";
   flag_id: string | null;
@@ -76,9 +82,13 @@ export type LoadingVehicle = {
   type: string;
   stops: number;
   departs: string;
+  /** Planned departure, for the countdown and the order of the queue. */
+  departAt: string;
   capacityKg: number;
   capacityM3: number;
   refrigerated: boolean;
+  /** The trip carries chilled orders: the cold chain applies. */
+  chilled: boolean;
   /** Released to the driver (route state "loaded"). */
   released: boolean;
   /** Set by a plan change the loader has not opened yet. */
@@ -112,7 +122,9 @@ export type LoadLine = {
   product: string;
   units: number;
   unit: string;
-  tag: string;
+  /** Handling the loader must not miss; empty for an ordinary line. Chilled is shown on the stop. */
+  tags: string[];
+  chilled: boolean;
   /** Weight and volume of the whole line, used by the load gauges. */
   weightKg: number;
   volumeM3: number;
@@ -125,7 +137,11 @@ export type LoadStop = {
   stopId: number;
   outlet: string;
   unload: string;
-  deliverBy: string;
+  /** "05:44" */
+  planned: string;
+  /** When the store's window closes that day ("07:45"). */
+  windowCloses: string | null;
+  chilled: boolean;
   lines: LoadLine[];
   /**
    * The loader signed the stop off. A stop can be confirmed with a flagged line
@@ -148,9 +164,11 @@ export function toVehicle(row: RouteRow, changes: PlanChangeRow[]): LoadingVehic
     type: `${row.vehicle_class} · ${BRAND_NAME[row.brand_code]} ${row.district_name}`,
     stops: row.stop_count,
     departs: formatTime(row.depart_at),
+    departAt: row.depart_at,
     capacityKg: Number(row.max_weight_kg),
     capacityM3: Number(row.max_volume_m3),
     refrigerated: row.carries_chilled,
+    chilled: Number(row.chilled_orders ?? 0) > 0,
     released: row.state === "loaded",
     planChanged: mine.length > 0,
     changedStops: mine[0]?.changed_stops,
@@ -179,7 +197,7 @@ export function toStops(rows: LoadLineRow[]): LoadStop[] {
     let stop = stops.get(r.stop_id);
     if (!stop) {
       stop = { stop: r.stop_seq, stopId: r.stop_id, outlet: r.outlet_name, unload: UNLOAD[r.unload] ?? r.unload,
-               deliverBy: formatTime(r.planned_arrival), lines: [] };
+               planned: formatTime(r.planned_arrival), windowCloses: r.window_closes ? clockTime(r.window_closes) : null, chilled: false, lines: [] };
       stops.set(r.stop_id, stop);
     }
     const units = Number(r.ordered_qty);
@@ -192,7 +210,8 @@ export function toStops(rows: LoadLineRow[]): LoadStop[] {
       product: r.product_name,
       units,
       unit: r.unit,
-      tag: r.line_temp === "chilled" ? "Chilled" : r.fragile ? "Fragile" : r.hanging ? "Hanging" : "Dry",
+      tags: [r.fragile && "Fragile", r.hanging && "Hanging", r.high_value && "High value"].filter((t): t is string => Boolean(t)),
+      chilled: r.line_temp === "chilled",
       weightKg: units * Number(r.unit_weight_kg),
       volumeM3: units * Number(r.unit_volume_m3),
       confirmed: loaded !== null,
@@ -208,7 +227,7 @@ export function toStops(rows: LoadLineRow[]): LoadStop[] {
         : undefined,
     });
   }
-  return [...stops.values()].map((s) => ({ ...s, confirmed: s.lines.every((l) => l.confirmed) }));
+  return [...stops.values()].map((s) => ({ ...s, chilled: s.lines.some((l) => l.chilled), confirmed: s.lines.every((l) => l.confirmed) }));
 }
 
 // --------------------------------------------------------------- progress ----
@@ -295,10 +314,9 @@ export function flagLabel(line: LoadLine) {
 }
 
 /**
- * The queue is worked in departure order, so it is always sorted by time rather
- * than by the order the vehicles arrived in. Times are zero-padded 24h, which
- * sorts correctly as text.
+ * The queue is worked by urgency: trips still to load first, the soonest departure on top; trips already
+ * released to their driver drop to the end.
  */
 export function sortByDeparture(vehicles: LoadingVehicle[]) {
-  return [...vehicles].sort((a, b) => a.departs.localeCompare(b.departs));
+  return [...vehicles].sort((a, b) => Number(a.released) - Number(b.released) || a.departAt.localeCompare(b.departAt));
 }

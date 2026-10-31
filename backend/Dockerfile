@@ -27,6 +27,9 @@ RUN --mount=type=cache,id=uv,target=/root/.cache/uv \
 FROM python:3.12-slim AS runner
 WORKDIR /app
 
+# LightGBM (the lateness model) needs the OpenMP runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system --gid 1001 fastapi && \
     useradd --system --uid 1001 --gid fastapi fastapi
 

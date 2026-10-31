@@ -117,7 +117,7 @@ with TestClient(app) as c:
     r1 = ok(c.post("/api/v1/sync", json={"device_id": dev_d, "client_now": now(), "events": evs}, headers=DRV))
     r2 = ok(c.post("/api/v1/sync", json={"device_id": dev_d, "client_now": now(), "events": evs}, headers=DRV))
     print("  driver sync:", [x["state"] for x in r1["results"]], "| resend:", [x["state"] for x in r2["results"]])
-    att = ok(c.post("/api/v1/attachments", headers=DRV, files={"file": ("pod.jpg", b"\xff\xd8fakejpeg", "image/jpeg")},
+    att = ok(c.post("/api/v1/attachments", headers=DRV, files={"file": ("pod.jpg", b"\xff\xd8\xff\xe0fakejpeg", "image/jpeg")},
                     data={"kind": "photo", "delivery_id": delivery_id}), 201)
     link = ok(c.get(f"/api/v1/attachments/{att['attachment_id']}", headers=SM))["url"]
     print("  photo:", att["attachment_id"], "signed link serves:", c.get(link).status_code,

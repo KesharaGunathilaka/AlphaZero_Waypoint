@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { DemoClockBar } from "@/components/waypoint/demo-clock";
 import { DriverNavProvider, type DriverScreen } from "./driver-nav";
 import { MyRun } from "./my-run";
 import { RecordDelivery } from "./record-delivery";
@@ -27,6 +28,7 @@ export function DriverApp() {
 
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-wp-surface-2 text-wp-text tabular-nums sm:p-4">
+      <DemoClockBar className="w-full sm:mb-2 sm:max-w-[430px] sm:rounded-md" />
       {hydrated ? (
         <RunProvider>
           <DriverNavProvider screen={screen} onNavigate={setScreen}>

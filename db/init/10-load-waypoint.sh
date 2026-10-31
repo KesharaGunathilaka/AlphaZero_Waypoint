@@ -18,3 +18,11 @@ done
 
 echo "Waypoint: seeding the demo day"
 $PSQL -tAc "SELECT wp.demo_reset();"
+
+# The API's own login: a member of waypoint_app (no ownership, row-level security applies, append-only
+# tables stay append-only). docker-compose.yml connects the api service with it.
+echo "Waypoint: creating the API login role"
+$PSQL -v api_user="${WAYPOINT_API_USER:-waypoint_api}" -v api_pw="${WAYPOINT_API_PASSWORD:-waypoint-api-local}" <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L IN ROLE waypoint_app', :'api_user', :'api_pw')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'api_user') \gexec
+SQL

@@ -19,6 +19,10 @@ export type Run = {
   plan_state: "draft" | "released" | null;
   version: number | null;
   orders: number;
+  /** When orders closed (the plan opened); null while still open. */
+  closed_at: string | null;
+  /** Closed by the 16:00 cutoff on its own, not by the dispatcher's button. */
+  closed_automatically: boolean;
 };
 export type Runs = { next_open_date: string; runs: Run[] };
 
@@ -33,6 +37,9 @@ export type Stop = {
   service_minutes: number;
   unload: string;
   van_only: boolean;
+  /** The store's delivery window that day ("05:00:00"). */
+  window_opens: string | null;
+  window_closes: string | null;
   orders: StopOrder[] | null;
 };
 
@@ -120,6 +127,52 @@ export type PlanView = {
   vehicles: Vehicle[];
   reasons: Reason[];
   next_operating_day: string | null;
+  lateness: Lateness | null;
+};
+
+/** Our Datathon Task 1 model on one stop: chance of arriving after the window closes, expected arrival and handling. */
+export type StopForecast = {
+  late_probability: number;
+  level: "likely" | "risk" | "ok";
+  service_minutes: number;
+  allowance_minutes: number;
+  expected_arrival: string;
+  window_closes?: string | null;
+  why: string[];
+  /** Live: the chance recorded when the plan was sent. */
+  was?: number;
+};
+/** The store's answer to "likely after your window". */
+export type ReceivingReply = { answer: "will_receive" | "cannot_receive"; receive_until: string | null; replied_at: string };
+/** Null when no model is installed on the server. In Live, `level` is "likely" only where today's delays raised a
+ *  stop's chance since the plan was sent (an alert); elsewhere "ok". */
+export type Lateness = { model: string; history_cutoff: string; stops: Record<string, StopForecast>; alerts?: Record<string, unknown> };
+
+/** Before the plan: what is coming in for a delivery day against the fleet that can carry it. */
+export type Outlook = {
+  service_date: string;
+  cutoff_at: string;
+  demand: { brand: BrandCode; temp: "ambient" | "chilled"; orders: number; kg: number; m3: number; van_only: number; moved_in: number }[];
+  fleet: { is_van: boolean; carries_chilled: boolean; available: number; m3_per_trip: number | null; kg_per_trip: number | null; in_workshop: string[] }[];
+  fresh_budget_minutes: number;
+};
+
+/** Would a vehicle in the workshop, back in service, let a deferred order go? */
+export type WhatIf = {
+  order_id: number;
+  today: { orders_served: number; orders_total: number } | null;
+  options: { vehicle_id: number; vehicle: string; serves_order: boolean; orders_served: number; orders_total: number }[];
+};
+
+/** Plan future capacity: the demand forecast by week and brand, and the depot's fleet. */
+export type Capacity = {
+  forecast: {
+    iso_year: number; iso_week: number; week_start: string; brand: BrandCode; total_m3: number; chilled_m3: number;
+    source: string; loaded_at: string; operating_days: number; festival: string | null; payday: boolean | null;
+  }[];
+  fleet: { vehicle: string; class: string; is_van: boolean; carries_chilled: boolean; active: boolean; m3: number; kg: number }[];
+  /** Average of the last released plans: how many vehicles and trips a day's volume really took. */
+  recent: { days: number; since: string | null; vehicles: number | null; trips: number | null; m3: number | null };
 };
 
 // ---------------------------------------------------------------- monitor ----
@@ -158,7 +211,10 @@ export type FleetRow = {
   last_seen_at: string | null;
   no_signal: boolean;
   exception_count: number;
+  /** The worst alert on this trip (worked out in the browser from the alerts): sets its colour on Live. */
+  worst?: Severity | null;
 };
+export type Severity = "crit" | "warn" | "info";
 export type Exception = {
   kind: string;
   depot: string | null;
@@ -170,6 +226,11 @@ export type Exception = {
   flag_id: string | null;
   since: string | null;
   detail: string;
+  /** likely_late only: the model's chance now and when the plan was sent, why, and the store's answer. */
+  late_probability?: number;
+  was?: number;
+  why?: string[];
+  reply?: ReceivingReply | null;
 };
 export type MonitorStop = {
   route_id: number;
@@ -191,6 +252,8 @@ export type Closeout = {
   depot: string;
   delivered: number;
   delivered_in_part: number;
+  /** Of those: the driver handed over all that was on board, but the loader had left some short. */
+  loaded_short?: number;
   not_delivered: number;
   not_yet: number;
   confirmed_by_store: number;
@@ -207,20 +270,35 @@ export type Monitor = {
   exceptions: Exception[];
   stops: MonitorStop[];
   closeout: Closeout[];
+  lateness: Lateness | null;
   server_time: string;
 };
 
-export const EXCEPTION_STYLE: Record<string, { label: string; state: Tone }> = {
-  delivery_failed: { label: "Delivery failed", state: "crit" },
-  driver_reported: { label: "Driver reported", state: "info" },
-  short_loaded: { label: "Short-loaded", state: "crit" },
-  no_signal: { label: "No signal", state: "offline" },
-  late: { label: "Late", state: "warn" },
-  loader_flag: { label: "Loader flag", state: "warn" },
-  plan_conflict: { label: "Plan conflict", state: "warn" },
-  instruction_unseen: { label: "Instruction unseen", state: "info" },
-  rejected_event: { label: "Record rejected", state: "warn" },
+export const EXCEPTION_LABEL: Record<string, string> = {
+  delivery_failed: "Delivery failed",
+  driver_reported: "Driver reported",
+  short_loaded: "Short-loaded",
+  not_left: "Hasn't left",
+  no_signal: "No signal",
+  late: "Late",
+  likely_late: "Likely to miss window",
+  loader_flag: "Loader flag",
+  plan_conflict: "Plan conflict",
+  instruction_unseen: "Not opened yet",
+  rejected_event: "Record refused",
 };
+
+/** An alert's colour comes from how serious it is (the server's severity), so red always means critical. */
+export function exceptionTone(e: Pick<Exception, "kind" | "severity">): Tone {
+  if (e.kind === "no_signal") return "offline";
+  return e.severity === "crit" ? "crit" : e.severity === "info" ? "info" : "warn";
+}
+
+/** The worst severity among a trip's alerts (no signal is shown on its own, so it doesn't count here). */
+export function worstSeverity(alerts: Exception[]): Severity | null {
+  const seen = new Set(alerts.filter((e) => e.kind !== "no_signal").map((e) => e.severity));
+  return seen.has("crit") ? "crit" : seen.has("warn") ? "warn" : seen.has("info") ? "info" : null;
+}
 
 // ----------------------------------------------------------------- ledger ----
 export type LedgerRecord = {
@@ -257,9 +335,63 @@ export type Ledger = {
   per_day: { day: string; is_working: boolean; deferred: number | null }[];
 };
 
-export type OrderRecord = {
+/** One order and where it is now (GET /dispatch/orders?date= rows; also the head of an OrderRecord). */
+export type OrderRow = {
   order_id: number;
   confirmation_no: string;
+  status: string;
+  temp: "ambient" | "chilled";
+  delivery_date: string;
+  deferral_count: number;
+  original_delivery_date: string;
+  source: "store" | "dispatcher";
+  placed_at: string;
+  outlet_id: number;
+  outlet_code: string;
+  outlet_name: string;
+  van_only: boolean;
+  unload: string;
+  brand_code: BrandCode;
+  brand_name: string;
+  district: string;
+  weight_kg: number;
+  volume_m3: number;
+  line_count: number;
+  route_id: number | null;
+  route_seq: number | null;
+  stop_seq: number | null;
+  planned_arrival: string | null;
+  vehicle: string | null;
+  delivery_outcome: "delivered" | "delivered_in_part" | "not_delivered" | null;
+  delivered_at: string | null;
+  receipt_at: string | null;
+  receipt_ok: boolean | null;
+  draft_reason: string | null;
+  /** An earlier delivery attempt failed and the order was moved to this day. */
+  failed_before: boolean;
+};
+/** An order moved off the day: deferred by the dispatcher, or requeued after a failed delivery. */
+export type MovedOrder = OrderRow & {
+  to_date: string;
+  moved_kind: "deferred" | "requeued_after_failure";
+  moved_reason: string;
+  moved_note: string | null;
+};
+export type DayOrders = { date: string; orders: OrderRow[]; moved_away: MovedOrder[] };
+
+export type OrderLine = { line_no: number; sku: string; name: string; unit: string; qty: number; kg: number; m3: number; fragile: boolean; high_value: boolean };
+
+export type OrderRecord = Partial<OrderRow> & {
+  order_id: number;
+  confirmation_no: string;
+  lines?: OrderLine[];
+  outlet?: {
+    address: string | null;
+    access_note: string | null;
+    gate_contact_name: string | null;
+    depot: string;
+    windows: { kind: "delivery" | "mall_access"; opens: string; closes: string }[] | null;
+  } | null;
   timeline: { to_status: string; at: string; note: string | null }[];
   deferrals: { from_date: string; to_date: string; reason: string; note: string | null; decided_by: string; decided_at: string }[];
   notices: { kind: string; title: string; created_at: string; read_at: string | null }[];
