@@ -91,3 +91,5 @@ desktop.ini
 !.vscode/settings.json
 # Claude Code local tool settings (launch configs, permissions)
 .claude/
+/AlphaZero_Datathon/models
+/AlphaZero_Datathon/submissions
