@@ -2,7 +2,7 @@
 
 One web app serves all four roles and talks to one API. The database guards every booklet rule. The same code runs in Docker for the judges and on Vercel, Neon and Clerk when deployed.
 
-Related docs: [Database and data model](database.md) · [Data flow](data-flow.md) · [API](api.md) · [UX by role](ux-by-role.md)
+Related docs: [Data flow](data-flow.md) · [Security](security.md) · [Engine changes](engine-changes.md) · API reference: `/docs` on a running API
 
 ---
 
